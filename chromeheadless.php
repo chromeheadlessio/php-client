@@ -202,9 +202,9 @@ function cloudRequest($params = []) {
         'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
     );
     $ch = curl_init();
-    $KOOL_EXPORT_SERVICE = "http://localhost:1982/api/export";
-    // $KOOL_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
-    $target_url = get($params, 'serviceHost', $KOOL_EXPORT_SERVICE);
+    // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+    $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+    $target_url = get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
     $headers = array(
         "Content-Type:multipart/form-data",
         "Authorization: Bearer $secretToken",
