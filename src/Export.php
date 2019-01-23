@@ -262,7 +262,7 @@ class Export
 
     function toString()
     {
-        return $this->exportContent();
+        return $this->exportContent;
     }
 
     function download($downloadName, $openOnBrowser=false)
