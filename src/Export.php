@@ -87,9 +87,14 @@ class Export
         $protocol = $this->getIsSecureConnection()?"https":"http";
         $http_host = (!empty($_SERVER['HTTP_HOST'])) ? 
             "$protocol://".$_SERVER['HTTP_HOST'] : "http://127.0.0.1";
+        $http_host = $this->get($this->params, 'httpHost', $http_host);
 
         $url = $this->getFullUrl();
         $url = substr($url, 0, strrpos($url, "/"));
+        if (isset($this->params['baseUrl'])) {
+            $url = $http_host . "/" . $this->params['baseUrl'];
+        }
+        // echo $url; exit();
         $content = preg_replace_callback('~<(link)([^>]+)href=["\']([^>]*)["\']~', 
             function($matches) use ($http_host, $url, $tempPath) {
                 $href = $matches[3];
@@ -205,16 +210,15 @@ class Export
         $authentication = $this->get($params, 'authentication', []);
         $secretToken = $this->get($authentication, 'secretToken', '');
         $options = $this->get($params, 'options', []);
-        $fileToExport = $this->get($params, 'fileToExport', null);
         $html = $this->get($params, 'html', '');
-        $url = $this->get($params, 'url', null);
         list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
-            'exportFormat' => $this->get($options, 'format', 'pdf'), //pdf, png or jpeg
-            'waitUntil' => $this->get($options, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
+            'exportFormat' => $this->get($params, 'format', 'pdf'), //pdf, png or jpeg
+            'waitUntil' => $this->get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
+            'options' => json_encode($options)
         );
         $ch = curl_init();
         $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
@@ -224,7 +228,7 @@ class Export
             "Content-Type:multipart/form-data",
             "Authorization: Bearer $secretToken",
         );
-        $options = array(
+        $curlOptions = array(
             CURLOPT_URL => $target_url,
             CURLOPT_HEADER => true,
             CURLOPT_POST => 1,
@@ -233,7 +237,7 @@ class Export
             CURLOPT_INFILESIZE => filesize($file_name_with_full_path),
             CURLOPT_RETURNTRANSFER => true
         ); // cURL options
-        curl_setopt_array($ch, $options);
+        curl_setopt_array($ch, $curlOptions);
         $result = curl_exec($ch);
         if(!curl_errno($ch))
         {
@@ -249,12 +253,13 @@ class Export
         return $result;
     }
 
-    function pdf($params)
+    function pdf($options)
     {
+        $params = $this->params;
         ob_start();
         // echo $tmpHtmlFile;
-        $options = $this->init($params, 'options', []);
-        $params['options']['format'] = 'pdf';
+        $params["format"] = 'pdf';
+        $params["options"] = $options;
         $this->exportContent = $this->cloudRequest($params);
         ob_end_clean();
         return $this;
