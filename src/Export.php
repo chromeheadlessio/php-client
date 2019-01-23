@@ -218,11 +218,15 @@ class Export
             'exportFormat' => $this->get($params, 'format', 'pdf'), //pdf, png or jpeg
             'waitUntil' => $this->get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
+            // 'htmlContent' => '',
+            // 'url' => '',
+            // https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagepdfoptions
+            // https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagescreenshotoptions
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = $this->get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
@@ -253,15 +257,33 @@ class Export
         return $result;
     }
 
-    function pdf($options)
+    function export($format, $options)
     {
         $params = $this->params;
         ob_start();
         // echo $tmpHtmlFile;
-        $params["format"] = 'pdf';
+        $params["format"] = $format;
         $params["options"] = $options;
         $this->exportContent = $this->cloudRequest($params);
         ob_end_clean();
+        return $this;
+    }
+
+    function pdf($options)
+    {
+        $this->export('pdf', $options);
+        return $this;
+    }
+
+    function jpg($options)
+    {
+        $this->export('jpeg', $options);
+        return $this;
+    }
+
+    function png($options)
+    {
+        $this->export('png', $options);
         return $this;
     }
 
