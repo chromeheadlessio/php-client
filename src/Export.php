@@ -4,6 +4,23 @@ namespace chromeheadlessio;
 
 include "File.php";
 
+function get($arr,$keys,$default=null)
+{
+    if(! is_array($arr)) {
+        return $default;
+    }
+    if (is_array($keys) and count($keys) > 0) {
+        foreach ($keys as $key) {
+            $arr = get($arr, $key, $default);
+        }
+        return $arr;
+    }
+    if (is_string($keys) || is_int($keys)) {
+        return isset($arr[$keys]) ? $arr[$keys] : $default;
+    } 
+    return $default;
+}
+
 class Export
 {
 
@@ -17,30 +34,6 @@ class Export
         $export = new Export($params);
         return $export;
     }
-
-    function init(&$arr, $key, $default = null) {
-        if (! isset($arr[$key]))
-            $arr[$key] = $default;
-        return $arr[$key];
-    }
-
-    function get($arr,$keys,$default=null)
-    {
-        if(! is_array($arr)) {
-            return $default;
-        }
-        if (is_array($keys) and count($keys) > 0) {
-            foreach ($keys as $key) {
-                $arr = get($arr, $key, $default);
-            }
-            return $arr;
-        }
-        if (is_string($keys) || is_int($keys)) {
-            return isset($arr[$keys]) ? $arr[$keys] : $default;
-        } 
-        return $default;
-    }
-
 
     function zipWholeFolder($path, $zipName) {
         // Get real path for our folder
@@ -77,6 +70,7 @@ class Export
 
     function saveTempContent($content)
     {
+        $params = $this->params;
         $tmpFolder = $this->getTempFolder();
         $tempDirName = uniqid();
         $tempZipName = $tempDirName . ".zip";
@@ -84,23 +78,32 @@ class Export
         $tempPath = $tmpFolder . "/" . $tempDirName;
         mkdir($tempPath);
 
-        $protocol = $this->getIsSecureConnection()?"https":"http";
-        $http_host = (!empty($_SERVER['HTTP_HOST'])) ? 
-            "$protocol://".$_SERVER['HTTP_HOST'] : "http://127.0.0.1";
-        $http_host = $this->get($this->params, 'httpHost', $http_host);
-
-        $url = $this->getFullUrl();
-        $url = substr($url, 0, strrpos($url, "/"));
-        if (isset($this->params['baseUrl'])) {
-            $url = $http_host . "/" . $this->params['baseUrl'];
+        $httpHost = get($params, 'httpHost', $this->getLocalHttpHost());
+        $url = get($params, 'url', get($params, 'baseUrl', $this->getLocalUrl()));
+        // echo $url; echo "<br>";
+        $parseUrl = parse_url($url);
+        if (! empty($parseUrl["host"])) {
+            $scheme   = isset($parseUrl['scheme']) ? 
+                $parseUrl['scheme'] : $this->getLocalProtocol();
+            $scheme .= "://";
+            $host = $parseUrl['host']; 
+            $port = isset($parseUrl['port']) ? ':' . $parseUrl['port'] : ''; 
+            $user = isset($parseUrl['user']) ? $parseUrl['user'] : ''; 
+            $pass = isset($parseUrl['pass']) ? ':' . $parseUrl['pass']  : ''; 
+            $pass = ($user || $pass) ? "$pass@" : ''; 
+            $path = isset($parseUrl['path']) ? $parseUrl['path'] : ''; 
+            $httpHost = "$scheme$user$pass$host$port";
+            $url = "$httpHost$path";
+        } else {
+            $url = substr($url, 0, strrpos($url, "/"));
         }
         // echo $url; exit();
         $content = preg_replace_callback('~<(link)([^>]+)href=["\']([^>]*)["\']~', 
-            function($matches) use ($http_host, $url, $tempPath) {
+            function($matches) use ($httpHost, $url, $tempPath) {
                 $href = $matches[3];
                 $href = str_replace("\/", "/", $href);
                 if (substr($href, 0, 1) === "/") {
-                    $href = $http_host . $href;
+                    $href = $httpHost . $href;
                 }
                 if (substr($href, 0, 4) !== "http") {
                     $href = $url . "/" . $href;
@@ -114,12 +117,12 @@ class Export
         , $content);
 
         $content = preg_replace_callback('~<(script|img|iframe)([^>]+)src=["\']([^>]*)["\']~', 
-            function($matches) use ($http_host, $url, $tempPath) {
+            function($matches) use ($httpHost, $url, $tempPath) {
                 $href = $matches[3];
                 // echo 'first character of href = ' . substr($href, 0, 1) . '<br>';
                 $href = str_replace("\/", "/", $href);
                 if (substr($href, 0, 1) === "/") {
-                    $href = $http_host . $href;
+                    $href = $httpHost . $href;
                 }
                 if (substr($href, 0, 4) !== "http") {
                     $href = $url . "/" . $href;
@@ -132,21 +135,21 @@ class Export
             }
         , $content);
 
-        function replaceHref($content, $http_host, $url, $tempPath)  {
+        function replaceHref($content, $httpHost, $url, $tempPath)  {
             $content = preg_replace_callback(
                 '~((KoolReport.load.resources|KoolReport.widget.init)\([^\(\)]*)"([^,\(\)]+)"~', 
             
-                function($matches) use ($http_host, $url, $tempPath) {
+                function($matches) use ($httpHost, $url, $tempPath) {
                     // print_r($matches); echo "<br><br>";
                     $href = $matches[3];
                     $matches1 = $matches[1];
-                    $matches1 = replaceHref($matches1, $http_host, $url, $tempPath);
+                    $matches1 = replaceHref($matches1, $httpHost, $url, $tempPath);
                     if ($href === 'js' || $href === 'css') {
                         return $matches1 . "\"$href\"";
                     }
                     $href = str_replace("\/", "/", $href);
                     if (substr($href, 0, 1) === "/") {
-                        $href = $http_host . $href;
+                        $href = $httpHost . $href;
                     }
                     if (substr($href, 0, 4) !== "http") {
                         $href = $url . "/" . $href;
@@ -162,7 +165,7 @@ class Export
             );
             return $content;
         }
-        $content = replaceHref($content, $http_host, $url, $tempPath);
+        $content = replaceHref($content, $httpHost, $url, $tempPath);
 
         // echo htmlentities($content); 
 
@@ -190,33 +193,51 @@ class Export
         return sys_get_temp_dir();
     }
 
-    function getIsSecureConnection()
+    function getLocalProtocol()
     {
-        return isset($_SERVER['HTTPS']) && (strcasecmp($_SERVER['HTTPS'],'on')===0 || $_SERVER['HTTPS']==1)
-            || isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strcasecmp($_SERVER['HTTP_X_FORWARDED_PROTO'],'https')===0;
+        $https = get($_SERVER, 'HTTPS', '');
+        $forwardedProto = get($_SERVER, 'HTTP_X_FORWARDED_PROTO', '');
+        if ($https==1 ||
+            strcasecmp($https,'on')===0  ||
+            strcasecmp($forwardedProto,'https')===0)
+            return 'https';
+        return 'http';
     }
 
-    function getFullUrl()
+    function getLocalHttpHost()
     {
-        $protocol = $this->getIsSecureConnection()?"https":"http";
-        $http_host = (!empty($_SERVER['HTTP_HOST']))?"$protocol://".$_SERVER['HTTP_HOST']:"http://localhost";
+        $localProtocal = $this->getLocalProtocol();
+        $localHost = get($_SERVER, 'HTTP_HOST', '127.0.0.1');
+        $localHttpHost = "$localProtocal://$localHost";
+        return $localHttpHost;
+    }
+
+    function getLocalUrl()
+    {
+        $localHttpHost = $this->getLocalHttpHost();
         $uri = $_SERVER["REQUEST_URI"];
-        return $http_host.$uri;
+        return $localHttpHost.$uri;
     }
 
+    
     function cloudRequest($params = []) {
         // print_r($params);
         // exit();
-        $authentication = $this->get($params, 'authentication', []);
-        $secretToken = $this->get($authentication, 'secretToken', '');
-        $options = $this->get($params, 'options', []);
-        $html = $this->get($params, 'html', '');
+        $authentication = get($params, 'authentication', []);
+        $secretToken = get($authentication, 'secretToken', '');
+        $options = get($params, 'options', []);
+        $html = get($params, 'html', '');
+        if (empty($html)) {
+            $url = get($params, 'url', null);
+            $html = file_get_contents($url);
+        }
+
         list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
-            'exportFormat' => $this->get($params, 'format', 'pdf'), //pdf, png or jpeg
-            'waitUntil' => $this->get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
+            'exportFormat' => get($params, 'format', 'pdf'), //pdf, png or jpeg
+            'waitUntil' => get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             // 'htmlContent' => '',
             // 'url' => '',
@@ -227,7 +248,7 @@ class Export
         $ch = curl_init();
         // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
-        $target_url = $this->get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
+        $target_url = get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
             "Authorization: Bearer $secretToken",
