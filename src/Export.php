@@ -245,8 +245,8 @@ class Export
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
