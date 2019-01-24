@@ -2,8 +2,6 @@
 
 namespace chromeheadlessio;
 
-include "File.php";
-
 function get($arr,$keys,$default=null)
 {
     if(! is_array($arr)) {
@@ -281,12 +279,12 @@ class Export
     function export($format, $options)
     {
         $params = $this->params;
-        ob_start();
+        // ob_start();
         // echo $tmpHtmlFile;
         $params["format"] = $format;
         $params["options"] = $options;
         $this->exportContent = $this->cloudRequest($params);
-        ob_end_clean();
+        // ob_end_clean();
         return $this;
     }
 
