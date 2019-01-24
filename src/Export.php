@@ -2,25 +2,26 @@
 
 namespace chromeheadlessio;
 
-function get($arr,$keys,$default=null)
-{
-    if(! is_array($arr)) {
-        return $default;
-    }
-    if (is_array($keys) and count($keys) > 0) {
-        foreach ($keys as $key) {
-            $arr = get($arr, $key, $default);
-        }
-        return $arr;
-    }
-    if (is_string($keys) || is_int($keys)) {
-        return isset($arr[$keys]) ? $arr[$keys] : $default;
-    } 
-    return $default;
-}
+
 
 class Export
 {
+    static function get($arr,$keys,$default=null)
+    {
+        if(! is_array($arr)) {
+            return $default;
+        }
+        if (is_array($keys) and count($keys) > 0) {
+            foreach ($keys as $key) {
+                $arr = self::get($arr, $key, $default);
+            }
+            return $arr;
+        }
+        if (is_string($keys) || is_int($keys)) {
+            return isset($arr[$keys]) ? $arr[$keys] : $default;
+        } 
+        return $default;
+}
 
     function __construct($params = null)
     {
@@ -76,8 +77,8 @@ class Export
         $tempPath = $tmpFolder . "/" . $tempDirName;
         mkdir($tempPath);
 
-        $httpHost = get($params, 'httpHost', $this->getLocalHttpHost());
-        $url = get($params, 'url', get($params, 'baseUrl', $this->getLocalUrl()));
+        $httpHost = self::get($params, 'httpHost', $this->getLocalHttpHost());
+        $url = self::get($params, 'url', self::get($params, 'baseUrl', $this->getLocalUrl()));
         // echo $url; echo "<br>";
         $parseUrl = parse_url($url);
         if (! empty($parseUrl["host"])) {
@@ -193,8 +194,8 @@ class Export
 
     function getLocalProtocol()
     {
-        $https = get($_SERVER, 'HTTPS', '');
-        $forwardedProto = get($_SERVER, 'HTTP_X_FORWARDED_PROTO', '');
+        $https = self::get($_SERVER, 'HTTPS', '');
+        $forwardedProto = self::get($_SERVER, 'HTTP_X_FORWARDED_PROTO', '');
         if ($https==1 ||
             strcasecmp($https,'on')===0  ||
             strcasecmp($forwardedProto,'https')===0)
@@ -205,7 +206,7 @@ class Export
     function getLocalHttpHost()
     {
         $localProtocal = $this->getLocalProtocol();
-        $localHost = get($_SERVER, 'HTTP_HOST', '127.0.0.1');
+        $localHost = self::get($_SERVER, 'HTTP_HOST', '127.0.0.1');
         $localHttpHost = "$localProtocal://$localHost";
         return $localHttpHost;
     }
@@ -221,12 +222,12 @@ class Export
     function cloudRequest($params = []) {
         // print_r($params);
         // exit();
-        $authentication = get($params, 'authentication', []);
-        $secretToken = get($authentication, 'secretToken', '');
-        $options = get($params, 'options', []);
-        $html = get($params, 'html', '');
+        $authentication = self::get($params, 'authentication', []);
+        $secretToken = self::get($authentication, 'secretToken', '');
+        $options = self::get($params, 'options', []);
+        $html = self::get($params, 'html', '');
         if (empty($html)) {
-            $url = get($params, 'url', null);
+            $url = self::get($params, 'url', null);
             $html = file_get_contents($url);
         }
 
@@ -234,8 +235,8 @@ class Export
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
-            'exportFormat' => get($params, 'format', 'pdf'), //pdf, png or jpeg
-            'waitUntil' => get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
+            'exportFormat' => self::get($params, 'format', 'pdf'), //pdf, png or jpeg
+            'waitUntil' => self::get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             // 'htmlContent' => '',
             // 'url' => '',
@@ -244,9 +245,9 @@ class Export
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
-        $target_url = get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
+        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        $target_url = self::get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
             "Authorization: Bearer $secretToken",
@@ -258,49 +259,55 @@ class Export
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $postfields,
             CURLOPT_INFILESIZE => filesize($file_name_with_full_path),
-            CURLOPT_RETURNTRANSFER => true
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_SSL_VERIFYHOST=>0,
+            CURLOPT_SSL_VERIFYPEER=>0,
         ); // cURL options
         curl_setopt_array($ch, $curlOptions);
-        $result = curl_exec($ch);
-        if(!curl_errno($ch))
-        {
-            $info = curl_getinfo($ch);
-            if ($info['http_code'] == 200)
-                $errmsg = "File uploaded successfully";
-        }
-        else
-        {
+        $response = curl_exec($ch);
+        $cInfo = curl_getinfo($ch);
+        // echo "curl info = "; print_r($info); echo "<br>";
+        // echo "result = $result <br>";
+        // exit();
+        if(curl_errno($ch)) {
             $errmsg = curl_error($ch);
+            throw new \Exception("Error when sending request: $errmsg");
+        }
+        else if ($cInfo['http_code'] != 200) {
+            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+            $header = substr($response, 0, $headerSize);
+            $body = substr($response, $headerSize);
+            echo("Request failed: $body");
+            exit();
         }
         curl_close($ch);
-        return $result;
+        return [$response, $cInfo];
     }
 
     function export($format, $options)
     {
         $params = $this->params;
-        // ob_start();
-        // echo $tmpHtmlFile;
+        ob_start();
         $params["format"] = $format;
         $params["options"] = $options;
-        $this->exportContent = $this->cloudRequest($params);
-        // ob_end_clean();
+        list($this->exportContent, $this->cInfo) = $this->cloudRequest($params);
+        ob_end_clean();
         return $this;
     }
 
-    function pdf($options)
+    function pdf($options = [])
     {
         $this->export('pdf', $options);
         return $this;
     }
 
-    function jpg($options)
+    function jpg($options = [])
     {
         $this->export('jpeg', $options);
         return $this;
     }
 
-    function png($options)
+    function png($options = [])
     {
         $this->export('png', $options);
         return $this;
