@@ -1,0 +1,50 @@
+<?php
+
+$html = renderExportHtml();
+$url = getExportPageUrl();
+
+\chromeheadlessio\Export::create([
+
+	'authentication' => [
+		//Header Bearer authentication with token
+		'secretToken' => $myChromeheadlessioSecretToken
+	],
+	
+	//use puppeteer page.goto's wait_until parameter
+	//https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagegotourl-options
+	"pageWaiting" => "load", //load, domcontentloaded, networkidle0, networkidle2
+	
+	//if set, html would be used by the php client to:
+	// - Save html content to a html file
+	// - retrieve all resource files (js, css, images, etc) in the html file
+	// - save the resource files to a temporary folder together with the html file 
+	// - replace all resource links in html file to local links
+	// - zip the temporary folder to send to chromeheadlessio service endpoint
+	'html' => $html,
+	
+	//if set, httpHost and/or baseUrl would be use to replace relative resource links 
+	//to absolute links for the php client to retrieve resource files
+	//if not set, by default, httpHost would be localhost 
+	//and baseUrl would be the current page where this php client runs
+	'httpHost' => 'http://localhost',
+	'baseUrl' => 'http://localhost/path/to/myExportPage'
+	
+	//if html is not set and url is, url would be used by this php client
+	//to save html and resources to a temporary folder and be zipped
+	//and sent to chromeheadlessio service endpoint
+	'url' => $url,
+	
+])
+//export method: pdf, jpg or png
+->pdf([
+	// puppeteer's page export options 
+	// https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagepdfoptions
+	// https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagescreenshotoptions   
+	"format"=>"A4",
+	'landscape'=>false,
+])
+//send the exported file to user's browser
+->download('myExportPage.pdf')
+//or save the exported file to the current server where this php-client runs
+// ->save($path)
+;
