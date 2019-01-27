@@ -82,7 +82,7 @@ class Export
             self::get($params, 'baseUrl', $this->getLocalUrl()));
         // echo $baseUrl; echo "<br>";
         $parseUrl = parse_url($baseUrl);
-        // echo "parseUrl ="; print_r($parseUrl); echo "<br>";
+        echo "parseUrl ="; print_r($parseUrl); echo "<br>";
         if (! empty($parseUrl["host"])) {
             $scheme   = isset($parseUrl['scheme']) ? 
                 $parseUrl['scheme'] : $this->getLocalProtocol();
@@ -98,8 +98,11 @@ class Export
         } else {
             $baseUrl = substr($baseUrl, 0, strrpos($baseUrl, "/"));
         }
-        // echo "httpHost = $httpHost <br>";
-        // echo "baseUrl = $baseUrl <br>";
+        while (substr($baseUrl, -1) === "/") {
+            $baseUrl = substr($baseUrl, 0, strlen($baseUrl) - 1);
+        }
+        echo "httpHost = $httpHost <br>";
+        echo "baseUrl = $baseUrl <br>";
 
         $resourcePatterns = [
             [
@@ -112,11 +115,11 @@ class Export
                 "replace" => "<{group1}{group2}src='{group3}'",
                 "urlGroup" => "{group3}"
             ],
-            [
-                "regex" => '~((KoolReport.load.resources|KoolReport.widget.init)\([^\)]*)["\']([^"\',\[\]\:]+)["\']~',
-                "replace" => "{group1}'{group3}'",
-                "urlGroup" => "{group3}"
-            ]
+            // [
+            //     "regex" => '~((KoolReport.load.resources|KoolReport.widget.init)\([^\)]*)["\']([^"\',\)\[\]\:]+)["\']~',
+            //     "replace" => "{group1}'{group3}'",
+            //     "urlGroup" => "{group3}"
+            // ]
         ];
         $paramResourcePatterns = self::get($params, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramResourcePatterns);
@@ -138,50 +141,54 @@ class Export
             }
             // echo "numGroup = $numGroup <br>";
             // echo "urlOrder = $urlOrder <br>";
-            $flag = true;
-            while ($flag) {
-                $flag = false;
+            $loopState = [ 'continue' => true ];
+            while ($loopState['continue']) {
+                $loopState['continue'] = false;
                 $content = preg_replace_callback(
                     $rp["regex"], 
                     function ($matches) use ($rp, $fileList, $httpHost, $baseUrl, 
-                        $tempPath, $numGroup, $urlOrder) {
-                        echo "matches = "; print_r($matches); echo "<br>";
+                        $tempPath, $numGroup, $urlOrder, & $loopState) {
+                        // echo "matches = "; print_r($matches); echo "<br>";
                         $match = $matches[0];
                         // echo "match = $match <br>";
                         $url = $matches[$urlOrder];
                         $urlOffset = strpos($match, $url);
-                        $subMatch = substr($match, 0, $urlOffset);
                         $url = str_replace('\\', "", $url);
-                        echo "url = $url <br>";
-                        $repSubMatch = replaceUrls($subMatch, $rp, 
-                        $fileList, $httpHost, $baseUrl, $tempPath);
-                        echo "subMatch = $subMatch <br>";
-                        echo "repSubMatch = $repSubMatch <br>";
-                        if ($repSubMatch !== $subMatch) {
-                            $flag = true;
-                            return $repSubMatch 
-                                . substr($match, $urlOffset, strlen($match));
-                        }
+                        // echo "url = $url <br>";
+                        
                         if (substr($url, 0, 1) === '/') {
                             $url = $httpHost . $url;
                         }
                         if (substr($url, 0, 4) !== 'http') {
                             $url = $baseUrl . '/' . $url;
                         }
-                        echo "repurl = $url <br>";
                         $filename = basename($url);
                         if (! isset($fileList[$filename])) {
+                            // echo "repurl = $url <br>";
                             // echo "filename = $filename <br>";
                             $fileList[$filename] = true;
                             $fileContent = file_get_contents($url);
-                            file_put_contents($tempPath . "/" . $filename, $fileContent);
+                            if ($fileContent)
+                                file_put_contents($tempPath . "/" . $filename, $fileContent);
+                        }
+                        $subMatch = substr($match, 0, $urlOffset);
+                        $repSubMatch = replaceUrls($subMatch, $rp, 
+                            $fileList, $httpHost, $baseUrl, $tempPath);
+                        if ($repSubMatch !== $subMatch) {
+                            // echo "subMatch = $subMatch <br>";
+                            // echo "repSubMatch = $repSubMatch <br>";
+                            $loopState['continue'] = true;
+                            $replaceStr = $repSubMatch 
+                                . substr($match, $urlOffset, strlen($match));
+                            // echo "recursive replaceStr = $replaceStr <br>";
+                            return $replaceStr;
                         }
                         $replaceStr = $rp["replace"];
                         for ($j=1; $j<=$numGroup; $j+=1) {
                             $groupStr = $j === $urlOrder ? $filename : $matches[$j];
                             $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
                         }
-                        echo "replaceStr = $replaceStr <br>";
+                        // echo "regex replaceStr = $replaceStr <br>";
                         return $replaceStr;
                     }, 
                     $content
@@ -194,10 +201,10 @@ class Export
             $content = replaceUrls($content, $rp, $fileList, $httpHost, $baseUrl, $tempPath);
         }
 
-        echo ($content); 
+        // echo ($content); 
         // echo htmlentities($content); 
         
-        exit();
+        // exit();
 
         $exportHtmlPath = $tempPath . "/" . "export.html";
         if(file_put_contents($exportHtmlPath, $content)) {
