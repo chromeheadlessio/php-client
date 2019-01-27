@@ -118,6 +118,10 @@ class Export
                 "urlGroup" => "{group3}"
             ]
         ];
+        $paramResourcePatterns = self::get($params, 'resourcePatterns', []);
+        $resourcePatterns = array_merge($resourcePatterns, $paramResourcePatterns);
+        // print_r($resourcePatterns); 
+        // exit();
         $fileList = [];
         function replaceUrls($content, $rp, $fileList, $httpHost, $baseUrl, $tempPath) {
             $numGroup = 0;
@@ -128,7 +132,6 @@ class Export
                 if ((int)$match > $numGroup)
                     $numGroup = (int)$match;
             }
-            $numGroup++;
             $urlOrder = 1;
             while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
                 $urlOrder += 1;
@@ -136,7 +139,6 @@ class Export
             // echo "numGroup = $numGroup <br>";
             // echo "urlOrder = $urlOrder <br>";
             $flag = true;
-            
             while ($flag) {
                 $flag = false;
                 $content = preg_replace_callback(
@@ -147,12 +149,14 @@ class Export
                         $match = $matches[0];
                         // echo "match = $match <br>";
                         $url = $matches[$urlOrder];
-                        $url = str_replace('\\', "", $url);
-                        // echo "url = $url <br>";
                         $urlOffset = strpos($match, $url);
                         $subMatch = substr($match, 0, $urlOffset);
+                        $url = str_replace('\\', "", $url);
+                        echo "url = $url <br>";
                         $repSubMatch = replaceUrls($subMatch, $rp, 
                         $fileList, $httpHost, $baseUrl, $tempPath);
+                        echo "subMatch = $subMatch <br>";
+                        echo "repSubMatch = $repSubMatch <br>";
                         if ($repSubMatch !== $subMatch) {
                             $flag = true;
                             return $repSubMatch 
@@ -164,7 +168,7 @@ class Export
                         if (substr($url, 0, 4) !== 'http') {
                             $url = $baseUrl . '/' . $url;
                         }
-                        // echo "repurl = $url <br>";
+                        echo "repurl = $url <br>";
                         $filename = basename($url);
                         if (! isset($fileList[$filename])) {
                             // echo "filename = $filename <br>";
@@ -173,11 +177,11 @@ class Export
                             file_put_contents($tempPath . "/" . $filename, $fileContent);
                         }
                         $replaceStr = $rp["replace"];
-                        for ($j=1; $j<$numGroup; $j+=1) {
+                        for ($j=1; $j<=$numGroup; $j+=1) {
                             $groupStr = $j === $urlOrder ? $filename : $matches[$j];
                             $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
                         }
-                        // echo "replaceStr = $replaceStr <br>";
+                        echo "replaceStr = $replaceStr <br>";
                         return $replaceStr;
                     }, 
                     $content
@@ -190,9 +194,10 @@ class Export
             $content = replaceUrls($content, $rp, $fileList, $httpHost, $baseUrl, $tempPath);
         }
 
+        echo ($content); 
         // echo htmlentities($content); 
         
-        // exit();
+        exit();
 
         $exportHtmlPath = $tempPath . "/" . "export.html";
         if(file_put_contents($exportHtmlPath, $content)) {
@@ -271,8 +276,8 @@ class Export
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
