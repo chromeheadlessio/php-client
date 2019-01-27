@@ -101,8 +101,8 @@ class Export
         while (substr($baseUrl, -1) === "/") {
             $baseUrl = substr($baseUrl, 0, strlen($baseUrl) - 1);
         }
-        echo "httpHost = $httpHost <br>";
-        echo "baseUrl = $baseUrl <br>";
+        // echo "httpHost = $httpHost <br>";
+        // echo "baseUrl = $baseUrl <br>";
 
         $resourcePatterns = [
             [
@@ -126,7 +126,7 @@ class Export
         // print_r($resourcePatterns); 
         // exit();
         $fileList = [];
-        function replaceUrls($content, $rp, $fileList, $httpHost, $baseUrl, $tempPath) {
+        function replaceUrls($content, $rp, & $fileList, $httpHost, $baseUrl, $tempPath) {
             $numGroup = 0;
             $regex = '~\{group(\d+)\}~';
             preg_match_all($regex, $rp["replace"], $matches);
@@ -146,7 +146,7 @@ class Export
                 $loopState['continue'] = false;
                 $content = preg_replace_callback(
                     $rp["regex"], 
-                    function ($matches) use ($rp, $fileList, $httpHost, $baseUrl, 
+                    function ($matches) use ($rp, & $fileList, $httpHost, $baseUrl, 
                         $tempPath, $numGroup, $urlOrder, & $loopState) {
                         // echo "matches = "; print_r($matches); echo "<br>";
                         $match = $matches[0];
