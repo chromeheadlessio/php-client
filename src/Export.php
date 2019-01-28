@@ -121,8 +121,8 @@ class Export
                 "urlGroup" => "{group3}"
             ]
         ];
-        $paramResourcePatterns = self::get($params, 'resourcePatterns', []);
-        $resourcePatterns = array_merge($resourcePatterns, $paramResourcePatterns);
+        $paramRPs = self::get($params, 'resourcePatterns', []);
+        $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
         // print_r($resourcePatterns); 
         // exit();
         $fileList = [];
@@ -256,7 +256,6 @@ class Export
         return $localHttpHost.$uri;
     }
 
-    
     function cloudRequest($params = []) {
         // print_r($params);
         // exit();
@@ -283,8 +282,8 @@ class Export
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         $headers = array(
             "Content-Type:multipart/form-data",
