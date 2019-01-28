@@ -115,11 +115,6 @@ class Export
                 "replace" => "<{group1}{group2}src='{group3}'",
                 "urlGroup" => "{group3}"
             ],
-            [
-                "regex" => '~((KoolReport.load.resources|KoolReport.widget.init)\([^\)]*)["\']([^"\',\)\[\]\:]+)["\']~',
-                "replace" => "{group1}'{group3}'",
-                "urlGroup" => "{group3}"
-            ]
         ];
         $paramRPs = self::get($params, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
