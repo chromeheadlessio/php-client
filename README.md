@@ -1,10 +1,26 @@
 # ChromeHeadless.io - The PDF Generator Cloud Service
 
-#### Focus on your application, save your time & server resources by off-loading the heavy PDF generation tasks to us. ChromeHeadless.io will deliver the beautiful and error-free PDFs for your professional customer's invoice, data reports and more..
+### Focus on your application, save your time & server resources by off-loading the heavy PDF generation tasks to us. ChromeHeadless.io will deliver the beautiful and error-free PDFs for your professional customer's invoice, data reports and more..
 
 ## How it works?
 
 Our service is provided through REST APIs so virtually it can be used with any language and system. For convenience, we are constructing the client library for each of languages such as PHP. NodeJs, .Net and Python. So if you are using those languages, you may install the client library and provide it with your secret token created from your registered account. The client library will compress your HTML together with resources such as CSS and Javascript and send over to our server farms to generate PDF version. The high definition PDF will be sent back to you.
+
+## Advantages
+
+There are number of advantages of using our system:
+
+1. __No installation required:__ You do not have to install PhantomJS or Headless Chrome.
+2. __Off-load heavy task:__ Headless Chrome or PhantomJS required certain amount of CPUs and RAM which you may reserve for other crucial tasks. Beside your CPUs and RAM may not be optimized for this tasks which may affect the efficiency. Our system contains a farm of servers which is highly optimized so we can perform this tasks faster and better.
+3. __Avoid complicated interface:__ You may avoid unnecessarily complicated coding to control headless browser.
+4. __Everything works smoothly:__ We will take care to make sure that your PDFs generated nicely,all fonts are working so that you can spend more time concentrate on your application rather than be bugged with Headless Chrome issues.
+
+### Our advantages over other similar PDF cloud services
+
+We have studied well other services before we decided to move on with our services, here are some of our advantages over them:
+
+1. Some of them do not execute Javascript, only converting pure HTML to PDF but __WE DO__!
+2. Many of them require your application to be online so that resources can be loaded. If your application is in localhost or intranet their solution will not work but __WE DO__!
 
 ## Get Token Key
 
@@ -160,3 +176,9 @@ $service->export(...)->jpg([
     ]
 ])->save("../img/myfile.jpg");
 ```
+
+# About us
+
+__KoolPHP Inc__ has been in business for 10 years, we focus on building the featured rich yet easy-to-use components to help developers increase productivity and deliver highest quality applications within time and budget constraints. Our main products are KoolPHP UI and KoolReport. KoolPHP UI is a toolset for developer to construct web faster while KoolReport is an open-source reporting framework to build data reports and dashboard easier.
+
+
