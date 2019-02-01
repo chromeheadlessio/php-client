@@ -2,9 +2,7 @@
 
 namespace chromeheadlessio;
 
-
-
-class Export
+class Exporter
 {
     static function get($arr,$keys,$default=null)
     {
@@ -21,17 +19,17 @@ class Export
             return isset($arr[$keys]) ? $arr[$keys] : $default;
         } 
         return $default;
-}
-
-    function __construct($params = null)
-    {
-        $this->params = $params;
     }
 
-    public static function create($params = null) 
+    function __construct($authentication = null)
     {
-        $export = new Export($params);
-        return $export;
+        $this->authentication = $authentication;
+    }
+
+    public static function create($authentication = null) 
+    {
+        $exporter = new Exporter($authentication);
+        return $exporter;
     }
 
     function zipWholeFolder($path, $zipName) {
@@ -69,7 +67,7 @@ class Export
 
     function saveTempContent($content)
     {
-        $params = $this->params;
+        $settings = $this->settings;
         $tmpFolder = $this->getTempFolder();
         $tempDirName = uniqid();
         $tempZipName = $tempDirName . ".zip";
@@ -77,9 +75,9 @@ class Export
         $tempPath = $tmpFolder . "/" . $tempDirName;
         mkdir($tempPath);
 
-        $httpHost = self::get($params, 'httpHost', $this->getLocalHttpHost());
-        $baseUrl = self::get($params, 'url', 
-            self::get($params, 'baseUrl', $this->getLocalUrl()));
+        $httpHost = self::get($settings, 'httpHost', $this->getLocalHttpHost());
+        $baseUrl = self::get($settings, 'url', 
+            self::get($settings, 'baseUrl', $this->getLocalUrl()));
         // echo $baseUrl; echo "<br>";
         $parseUrl = parse_url($baseUrl);
         // echo "parseUrl ="; print_r($parseUrl); echo "<br>";
@@ -116,7 +114,7 @@ class Export
                 "urlGroup" => "{group3}"
             ],
         ];
-        $paramRPs = self::get($params, 'resourcePatterns', []);
+        $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
         // print_r($resourcePatterns); 
         // exit();
@@ -251,15 +249,18 @@ class Export
         return $localHttpHost.$uri;
     }
 
-    function cloudRequest($params = []) {
-        // print_r($params);
-        // exit();
-        $authentication = self::get($params, 'authentication', []);
-        $secretToken = self::get($authentication, 'secretToken', '');
-        $options = self::get($params, 'options', []);
-        $html = self::get($params, 'html', '');
+    function cloudRequest($format = 'pdf', $options = []) {
+        ob_start();
+        $secretToken = self::get($this->authentication, 'secretToken', '');
+        $headers = array(
+            "Content-Type:multipart/form-data",
+            "Authorization: Bearer $secretToken",
+        );
+
+        $settings = $this->settings;
+        $html = self::get($settings, 'html', '');
         if (empty($html)) {
-            $url = self::get($params, 'url', null);
+            $url = self::get($settings, 'url', null);
             $html = file_get_contents($url);
         }
 
@@ -267,8 +268,8 @@ class Export
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
-            'exportFormat' => self::get($params, 'format', 'pdf'), //pdf, png or jpeg
-            'waitUntil' => self::get($params, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
+            'exportFormat' => $format, //pdf, png or jpeg
+            'waitUntil' => self::get($settings, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             // 'htmlContent' => '',
             // 'url' => '',
@@ -279,11 +280,8 @@ class Export
         $ch = curl_init();
         // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
-        $target_url = self::get($params, 'serviceHost', $CLOUD_EXPORT_SERVICE);
-        $headers = array(
-            "Content-Type:multipart/form-data",
-            "Authorization: Bearer $secretToken",
-        );
+        $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
+        
         $curlOptions = array(
             CURLOPT_URL => $target_url,
             CURLOPT_HEADER => true,
@@ -313,75 +311,8 @@ class Export
             exit();
         }
         curl_close($ch);
-        return [$response, $cInfo];
-    }
-
-    function export($format, $options)
-    {
-        $params = $this->params;
-        ob_start();
-        $params["format"] = $format;
-        $params["options"] = $options;
-        list($this->exportContent, $this->cInfo) = $this->cloudRequest($params);
         ob_end_clean();
-        return $this;
-    }
-
-    function pdf($options = [])
-    {
-        $this->export('pdf', $options);
-        return $this;
-    }
-
-    function jpg($options = [])
-    {
-        $this->export('jpeg', $options);
-        return $this;
-    }
-
-    function png($options = [])
-    {
-        $this->export('png', $options);
-        return $this;
-    }
-
-    function toString()
-    {
-        return $this->exportContent;
-    }
-
-    function download($downloadName, $openOnBrowser=false)
-    {
-        $disposition = "attachment";
-        if(gettype($openOnBrowser)=="string") {
-            $disposition = $openOnBrowser;
-        } else if($openOnBrowser) {
-            $disposition = "inline";
-        }
-        $type = "pdf";
-        header("Pragma: public");
-        header("Expires: 0");
-        header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
-        header("Cache-Control: public");
-        header("Content-Description: File Transfer");
-        header("Content-Type: ".$type);
-        header("Content-Disposition: $disposition; filename=\"$downloadName\"");
-        header("Content-Transfer-Encoding: binary");
-        header("Content-Length: " . strlen($this->exportContent));
-        
-        echo $this->exportContent;
-
-        return $this;
-    }
-
-    function save($filePath)
-    {
-        if(file_put_contents($filePath, $this->exportContent)) {
-            return $this;
-        } else {
-            throw new \Exception("Could not save file $filePath");
-            return false;
-        }
+        return $response;
     }
 
 }
