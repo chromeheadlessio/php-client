@@ -65,6 +65,11 @@ class Exporter
         $zip->close();
     }
 
+    function toFilename($filename)
+    {
+        return md5($filename);
+    }
+
     function saveTempContent($content)
     {
         $settings = $this->settings;
@@ -75,6 +80,7 @@ class Exporter
         $tempPath = $tmpFolder . "/" . $tempDirName;
         mkdir($tempPath);
 
+        $scheme = $this->getLocalProtocol();
         $httpHost = self::get($settings, 'httpHost', $this->getLocalHttpHost());
         $baseUrl = self::get($settings, 'url', 
             self::get($settings, 'baseUrl', $this->getLocalUrl()));
@@ -84,14 +90,14 @@ class Exporter
         if (! empty($parseUrl["host"])) {
             $scheme   = isset($parseUrl['scheme']) ? 
                 $parseUrl['scheme'] : $this->getLocalProtocol();
-            $scheme .= "://";
+            // $scheme .= "://";
             $host = $parseUrl['host']; 
             $port = isset($parseUrl['port']) ? ':' . $parseUrl['port'] : ''; 
             $user = isset($parseUrl['user']) ? $parseUrl['user'] : ''; 
             $pass = isset($parseUrl['pass']) ? ':' . $parseUrl['pass']  : ''; 
             $pass = ($user || $pass) ? "$pass@" : ''; 
             $path = isset($parseUrl['path']) ? $parseUrl['path'] : ''; 
-            $httpHost = "$scheme$user$pass$host$port";
+            $httpHost = "$scheme://$user$pass$host$port";
             $baseUrl = "$httpHost$path";
         } else {
             $baseUrl = substr($baseUrl, 0, strrpos($baseUrl, "/"));
@@ -101,25 +107,35 @@ class Exporter
         }
         // echo "httpHost = $httpHost <br>";
         // echo "baseUrl = $baseUrl <br>";
+        // exit;
 
         $resourcePatterns = [
             [
-                "regex" => '~<(link)([^>]+)href=["\']([^>]*)["\']~',
+                "regex" => '~<(link)([^>]+)href=["\']([^"\'>]*)["\']~',
                 "replace" => "<{group1}{group2}href='{group3}'",
                 "urlGroup" => "{group3}"
             ],
             [
-                "regex" => '~<(script|img|iframe)([^>]+)src=["\']([^>]*)["\']~',
+                "regex" => '~<(script|img|iframe)([^>]+)src=["\']([^"\'>]*)["\']~',
                 "replace" => "<{group1}{group2}src='{group3}'",
                 "urlGroup" => "{group3}"
+            ],
+            [
+                "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
+                "replace" => "url('{group1}')",
+                "urlGroup" => "{group1}"
             ],
         ];
         $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
         // print_r($resourcePatterns); 
         // exit();
-        $fileList = [];
-        function replaceUrls($content, $rp, & $fileList, $httpHost, $baseUrl, $tempPath) {
+        $fileList = [
+            'saved' => [],
+            'hashed' => []
+        ];
+        function replaceUrls($content, $rp, & $fileList, 
+            $scheme, $httpHost, $baseUrl, $tempPath) {
             $numGroup = 0;
             $regex = '~\{group(\d+)\}~';
             preg_match_all($regex, $rp["replace"], $matches);
@@ -139,7 +155,8 @@ class Exporter
                 $loopState['continue'] = false;
                 $content = preg_replace_callback(
                     $rp["regex"], 
-                    function ($matches) use ($rp, & $fileList, $httpHost, $baseUrl, 
+                    function ($matches) use ($rp, & $fileList, 
+                        $scheme, $httpHost, $baseUrl, 
                         $tempPath, $numGroup, $urlOrder, & $loopState) {
                         // echo "matches = "; print_r($matches); echo "<br>";
                         $match = $matches[0];
@@ -149,24 +166,47 @@ class Exporter
                         $url = str_replace('\\', "", $url);
                         // echo "url = $url <br>";
                         
-                        if (substr($url, 0, 1) === '/') {
+                        if (substr($url, 0, 2) === '//') {
+                            $url = $scheme . ":" . $url;
+                        } else if (substr($url, 0, 1) === '/') {
                             $url = $httpHost . $url;
-                        }
-                        if (substr($url, 0, 4) !== 'http') {
+                        } else if (substr($url, 0, 4) !== 'http') {
                             $url = $baseUrl . '/' . $url;
                         }
                         $filename = basename($url);
-                        if (! isset($fileList[$filename])) {
+                        if (! isset($fileList['saved'][$filename])) {
                             // echo "repurl = $url <br>";
                             // echo "filename = $filename <br>";
-                            $fileList[$filename] = true;
                             $fileContent = file_get_contents($url);
-                            if ($fileContent)
+                            if ($fileContent) {
+                                if ($matches[1] === 'link') {
+                                    $urlRP = [
+                                        "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
+                                        "replace" => "url('{group1}')",
+                                        "urlGroup" => "{group1}"
+                                    ];
+                                    $fileContent = replaceUrls($fileContent, $urlRP, 
+                                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                                }
                                 file_put_contents($tempPath . "/" . $filename, $fileContent);
+                                if (! file_exists($tempPath . "/" . $filename)) {
+                                    $hashedFilename = md5($filename);
+                                    if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
+                                        $hashedFilename .= '.css';
+                                    }
+                                    if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
+                                        $hashedFilename .= '.js';
+                                    }
+                                    $fileList['hashed'][$filename] = $hashedFilename;
+                                    file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
+                                    // echo "filename = $hashedFilename <br>";
+                                }
+                                $fileList['saved'][$filename] = true;
+                            }
                         }
                         $subMatch = substr($match, 0, $urlOffset);
                         $repSubMatch = replaceUrls($subMatch, $rp, 
-                            $fileList, $httpHost, $baseUrl, $tempPath);
+                            $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
                         if ($repSubMatch !== $subMatch) {
                             // echo "subMatch = $subMatch <br>";
                             // echo "repSubMatch = $repSubMatch <br>";
@@ -178,7 +218,11 @@ class Exporter
                         }
                         $replaceStr = $rp["replace"];
                         for ($j=1; $j<=$numGroup; $j+=1) {
-                            $groupStr = $j === $urlOrder ? $filename : $matches[$j];
+                            $hashedFilename = $filename;
+                            if (isset($fileList['hashed'][$filename])) {
+                                $hashedFilename = $fileList['hashed'][$filename];
+                            }
+                            $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
                             $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
                         }
                         // echo "regex replaceStr = $replaceStr <br>";
@@ -191,7 +235,8 @@ class Exporter
         }
 
         foreach ($resourcePatterns as $rp) {
-            $content = replaceUrls($content, $rp, $fileList, $httpHost, $baseUrl, $tempPath);
+            $content = replaceUrls($content, $rp, $fileList, 
+                $scheme, $httpHost, $baseUrl, $tempPath);
         }
 
         // echo ($content); 
@@ -278,8 +323,8 @@ class Exporter
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         
         $curlOptions = array(

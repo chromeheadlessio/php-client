@@ -2,7 +2,7 @@
 
 namespace chromeheadlessio;
 
-// include "Exporter.php";
+include "Exporter.php";
 
 class Service
 {
