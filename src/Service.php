@@ -64,7 +64,7 @@ class Service
         return base64_encode($this->exportContent);
     }
 
-    public function sendToBrowser($filename, $openOnBrowser = 'inline')
+    public function sendToBrowser($filename, $openOnBrowser = 'attachment')
     {
         $disposition = "attachment";
         if(gettype($openOnBrowser)=="string") {

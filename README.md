@@ -57,7 +57,7 @@ $service->export([
 ])->pdf([
     "format"=>"A4",
     "orientation"=>"portrait"
-])->sendToDownload("helloworld.pdf");
+])->sendToBrowser("helloworld.pdf");
 ```
 
 ## Exporting content
@@ -98,7 +98,7 @@ $service->export(...)->pdf([
     "scale"=>1,
     "format"=>"A4",
     "landscape"=>true
-])->sendToDownload("myfile.pdf");
+])->sendToBrowser("myfile.pdf");
 ```
 
 ## Export to PNG
@@ -122,7 +122,7 @@ $service->export(...)->png([
         "width"=>500,
         "height"=>1000,
     ]
-])->sendToDownload("myfile.png");
+])->sendToBrowser("myfile.png");
 ```
 
 ## Export to JPG
@@ -148,17 +148,16 @@ $service->export(...)->jpg([
         "width"=>500,
         "height"=>1000,
     ]
-])->sendToDownload("myfile.jpg");
+])->sendToBrowser("myfile.jpg");
 ```
 
 ## Getting result
 
-In all above examples we use method `sendToDownload()` to send the file to browser for user to download. Here are all options:
+In all above examples we use method `sendToBrowser()` to send the file to browser for user to open on browser or download as attachment. Here are all options:
 
 |Method|Return|Description|
 |---|---|---|
-|`openOnBrowser($filename)`||Open file on browser|
-|`sendToDownload($filename)`||Force user to download file|
+|`sendToBrowser($filename, $inlineOrAttachment)`||Send file to client browser to open on browser or download as attachment. Default value is "attachment"|
 |`toString()`|string|Return filename as string|
 |`toBase64()`|string|Return content of file in base64|
 |`save($path)`||Save the file to specific location|
