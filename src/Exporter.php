@@ -116,7 +116,7 @@ class Exporter
                 "urlGroup" => "{group3}"
             ],
             [
-                "regex" => '~<(script|img|iframe)([^>]+)src=["\']([^"\'>]*)["\']~',
+                "regex" => '~<(script|img|iframe)([^>]+)src=["\']((?!data)[^"\'>]*)["\']~',
                 "replace" => "<{group1}{group2}src='{group3}'",
                 "urlGroup" => "{group3}"
             ],
@@ -177,6 +177,7 @@ class Exporter
                         if (! isset($fileList['saved'][$filename])) {
                             // echo "repurl = $url <br>";
                             // echo "filename = $filename <br>";
+                            // echo "url = $url <br>";
                             $fileContent = file_get_contents($url);
                             if ($fileContent) {
                                 if ($matches[1] === 'link') {
@@ -188,6 +189,8 @@ class Exporter
                                     $fileContent = replaceUrls($fileContent, $urlRP, 
                                         $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
                                 }
+                                // echo "url=$url<br>";
+                                // echo "filename=$filename<br>";
                                 file_put_contents($tempPath . "/" . $filename, $fileContent);
                                 if (! file_exists($tempPath . "/" . $filename)) {
                                     $hashedFilename = md5($filename);
@@ -323,8 +326,8 @@ class Exporter
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         
         $curlOptions = array(
