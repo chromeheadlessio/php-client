@@ -34,7 +34,7 @@ class Service
 
     public function jpg($options = [])
     {
-        $this->exportContent = $this->Exporter->cloudRequest('jpg', $options);
+        $this->exportContent = $this->Exporter->cloudRequest('jpeg', $options);
         return $this;
     }
 
