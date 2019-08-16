@@ -74,6 +74,7 @@ class Exporter
     {
         $settings = $this->settings;
         $tmpFolder = $this->getTempFolder();
+        // echo "tmpFolder=$tmpFolder"; exit;
         $tempDirName = uniqid();
         $tempZipName = $tempDirName . ".zip";
         $tempZipPath = $tmpFolder . "/" . $tempZipName;
@@ -260,14 +261,18 @@ class Exporter
 
     function getTempFolder()
     {
-        // if($useLocalTempFolder)
-        // {
-        //     if(!is_dir(realpath(dirname(__FILE__))."/tmp"))
-        //     {
-        //         mkdir(realpath(dirname(__FILE__))."/tmp");
-        //     }
-        //     return realpath(dirname(__FILE__))."/tmp";
-        // }
+        $useLocalTempFolder = isset($this->settings['useLocalTempFolder']) ?
+            $this->settings['useLocalTempFolder'] : false;
+        if($useLocalTempFolder)
+        {
+            // $path = dirname(__FILE__);
+            $path = dirname($_SERVER['SCRIPT_FILENAME']);
+            if(!is_dir(realpath($path)."/tmp"))
+            {
+                mkdir(realpath($path)."/tmp");
+            }
+            return realpath($path)."/tmp";
+        }
         return sys_get_temp_dir();
     }
 

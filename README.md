@@ -101,6 +101,51 @@ $service->export(...)->pdf([
 ])->sendToBrowser("myfile.pdf");
 ```
 
+### PDF options in view file
+
+Some options could be set directly in the PDF view file instead of pdf() method.
+
+#### header and footer
+
+In the view file, use header and footer tags to set pdf's header and footer template:
+
+__Example:__
+
+```
+<header>
+    <div id="header-template" 
+        style="font-size:10px !important; color:#808080; padding-left:10px">
+        <span>Header: </span>
+        {date}
+        {title}
+        {url}
+        {pageNumber}
+        {totalPages}
+        <span id='pageNum' class="pageNumber"></span>
+        <img src='http://www.chromium.org/_/rsrc/1438879449147/config/customLogo.gif?revision=3' />
+    </div>
+</header>
+<footer>
+...
+</footer>
+```
+if either header or footer tag exists, pdf options' displayHeaderFooter will be true. PDF options' headerTemplate and footerTemplate options take priority over view file's header and footer tags. With header and footer tags, if there's no font-size style, a default style "font-size:10x" is used. Header and footer tags supports place holders like {date}, {title}, etc and img tag with link-type src. For img tag pdf options' headerTemplate and footerTemplate only support base64-type src.
+
+#### margin
+
+In the view file, use the body tag's margin style to set pdf margin:
+
+__Example:__
+
+```
+//MyReportPDF.view.php
+<body style='margin: 1in 0.5in 1in 0.5in'>
+...
+</body>
+
+```
+If either header or footer tag exists but there's no body's margin, a default margin of 1 inch will be used
+
 ## Export to PNG
 
 The `png()` help to generate PNG file. It take an array as parameter defining options for your PNG. Below are list of properties:
