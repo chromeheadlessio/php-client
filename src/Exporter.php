@@ -97,7 +97,12 @@ class Exporter
             $user = isset($parseUrl['user']) ? $parseUrl['user'] : ''; 
             $pass = isset($parseUrl['pass']) ? ':' . $parseUrl['pass']  : ''; 
             $pass = ($user || $pass) ? "$pass@" : ''; 
-            $path = isset($parseUrl['path']) ? $parseUrl['path'] : ''; 
+            $path = isset($parseUrl['path']) ? $parseUrl['path'] : '';
+            if (substr($path, -4) === '.php') {
+                $path = explode("/", $path);
+                array_pop($path);
+                $path = implode("/", $path);
+            }
             $httpHost = "$scheme://$user$pass$host$port";
             $baseUrl = "$httpHost$path";
         } else {
@@ -331,7 +336,7 @@ class Exporter
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         
