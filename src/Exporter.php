@@ -307,7 +307,8 @@ class Exporter
         return $localHttpHost.$uri;
     }
 
-    function cloudRequest($format = 'pdf', $options = []) {
+    function cloudRequest($format = 'pdf', $options = []) 
+    {
         ob_start();
         $secretToken = self::get($this->authentication, 'secretToken', '');
         $headers = array(
@@ -328,6 +329,7 @@ class Exporter
         $postfields = array(
             'exportFormat' => $format, //pdf, png or jpeg
             'waitUntil' => self::get($settings, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
+            'engine' => self::get($settings, 'engine', 'chromeheadless'), //default null or using chrome headless, "wkhtmltopdf"
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             // 'htmlContent' => '',
             // 'url' => '',
@@ -336,7 +338,7 @@ class Exporter
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
         
