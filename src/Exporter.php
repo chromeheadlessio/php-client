@@ -344,7 +344,7 @@ class Exporter
         
         $curlOptions = array(
             CURLOPT_URL => $target_url,
-            CURLOPT_HEADER => true,
+            CURLOPT_HEADER => false,
             CURLOPT_POST => 1,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $postfields,
@@ -355,6 +355,7 @@ class Exporter
         ); // cURL options
         curl_setopt_array($ch, $curlOptions);
         $response = curl_exec($ch);
+        // print_r($response); exit;
         $cInfo = curl_getinfo($ch);
         // echo "curl info = "; print_r($info); echo "<br>";
         // echo "result = $result <br>";
