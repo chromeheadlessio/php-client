@@ -196,9 +196,9 @@ class Exporter
                                         $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
                                 }
                                 // echo "url=$url<br>";
-                                // echo "filename=$filename<br>";
-                                file_put_contents($tempPath . "/" . $filename, $fileContent);
-                                if (! file_exists($tempPath . "/" . $filename)) {
+                                echo "filename=$filename<br>";
+                                // file_put_contents($tempPath . "/" . $filename, $fileContent);
+                                // if (! file_exists($tempPath . "/" . $filename)) {
                                     $hashedFilename = md5($filename);
                                     if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
                                         $hashedFilename .= '.css';
@@ -209,8 +209,8 @@ class Exporter
                                     $fileList['hashed'][$filename] = $hashedFilename;
                                     file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
                                     // echo "filename = $hashedFilename <br>";
-                                }
-                                $fileList['saved'][$filename] = true;
+                                // } else 
+                                //     $fileList['saved'][$filename] = true;
                             }
                         }
                         $subMatch = substr($match, 0, $urlOffset);

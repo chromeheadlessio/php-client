@@ -1,6 +1,6 @@
 {
     "name": "chromeheadlessio/php-client",
-    "version":"0.4.0",
+    "version":"0.5.0",
     "description": "An Open Source PHP client to use cloud export service chromeheadless.io",
     "keywords": ["pdf export service","php client"],
     "homepage": "https://chromeheadless.io",
