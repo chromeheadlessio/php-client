@@ -196,7 +196,7 @@ class Exporter
                                         $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
                                 }
                                 // echo "url=$url<br>";
-                                echo "filename=$filename<br>";
+                                // echo "filename=$filename<br>";
                                 // file_put_contents($tempPath . "/" . $filename, $fileContent);
                                 // if (! file_exists($tempPath . "/" . $filename)) {
                                     $hashedFilename = md5($filename);
