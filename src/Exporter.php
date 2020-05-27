@@ -170,7 +170,7 @@ class Exporter
                         $url = $matches[$urlOrder];
                         $urlOffset = strpos($match, $url);
                         $url = str_replace('\\', "", $url);
-                        // echo "url = $url <br>";
+                        // echo "url1 = $url <br>";
                         
                         if (substr($url, 0, 2) === '//') {
                             $url = $scheme . ":" . $url;
@@ -180,10 +180,11 @@ class Exporter
                             $url = $baseUrl . '/' . $url;
                         }
                         $filename = basename($url);
+                        // print_r($fileList); echo "<br>";
                         if (! isset($fileList['saved'][$filename])) {
                             // echo "repurl = $url <br>";
                             // echo "filename = $filename <br>";
-                            // echo "url = $url <br>";
+                            // echo "url2 = $url <br><br>";
                             $fileContent = file_get_contents($url);
                             if ($fileContent) {
                                 if ($matches[1] === 'link') {
@@ -209,6 +210,8 @@ class Exporter
                                     $fileList['hashed'][$filename] = $hashedFilename;
                                     file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
                                     // echo "filename = $hashedFilename <br>";
+                                    $fileList['saved'][$filename] = true;
+                                    $fileList['saved'][$hashedFilename] = true;
                                 // } else 
                                 //     $fileList['saved'][$filename] = true;
                             }
@@ -246,6 +249,7 @@ class Exporter
         foreach ($resourcePatterns as $rp) {
             $content = replaceUrls($content, $rp, $fileList, 
                 $scheme, $httpHost, $baseUrl, $tempPath);
+            // break;
         }
 
         // echo ($content); 
