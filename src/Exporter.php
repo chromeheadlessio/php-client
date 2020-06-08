@@ -70,6 +70,112 @@ class Exporter
         return md5($filename);
     }
 
+    function replaceUrls($content, $rp, & $fileList, 
+            $scheme, $httpHost, $baseUrl, $tempPath) {
+            $numGroup = 0;
+            $regex = '~\{group(\d+)\}~';
+            preg_match_all($regex, $rp["replace"], $matches);
+            // echo "group matches = "; print_r($matches); echo "<br>";
+            foreach ($matches[1] as $match) {
+                if ((int)$match > $numGroup)
+                    $numGroup = (int)$match;
+            }
+            $urlOrder = 1;
+            while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
+                $urlOrder += 1;
+            }
+            // echo "numGroup = $numGroup <br>";
+            // echo "urlOrder = $urlOrder <br>";
+            $loopState = [ 'continue' => true ];
+            while ($loopState['continue']) {
+                $loopState['continue'] = false;
+                $content = preg_replace_callback(
+                    $rp["regex"], 
+                    function ($matches) use ($rp, & $fileList, 
+                        $scheme, $httpHost, $baseUrl, 
+                        $tempPath, $numGroup, $urlOrder, & $loopState) {
+                        // echo "matches = "; print_r($matches); echo "<br>";
+                        $match = $matches[0];
+                        // echo "match = $match <br>";
+                        $url = $matches[$urlOrder];
+                        $urlOffset = strpos($match, $url);
+                        $url = str_replace('\\', "", $url);
+                        // echo "url1 = $url <br>";
+                        
+                        if (substr($url, 0, 2) === '//') {
+                            $url = $scheme . ":" . $url;
+                        } else if (substr($url, 0, 1) === '/') {
+                            $url = $httpHost . $url;
+                        } else if (substr($url, 0, 4) !== 'http') {
+                            $url = $baseUrl . '/' . $url;
+                        }
+                        $filename = basename($url);
+                        // print_r($fileList); echo "<br>";
+                        if (! isset($fileList['saved'][$filename])) {
+                            // echo "repurl = $url <br>";
+                            // echo "filename = $filename <br>";
+                            // echo "url2 = $url <br><br>";
+                            $fileContent = file_get_contents($url);
+                            if ($fileContent) {
+                                if ($matches[1] === 'link') {
+                                    $urlRP = [
+                                        "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
+                                        "replace" => "url('{group1}')",
+                                        "urlGroup" => "{group1}"
+                                    ];
+                                    $fileContent = $this->replaceUrls($fileContent, $urlRP, 
+                                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                                }
+                                // echo "url=$url<br>";
+                                // echo "filename=$filename<br>";
+                                // file_put_contents($tempPath . "/" . $filename, $fileContent);
+                                // if (! file_exists($tempPath . "/" . $filename)) {
+                                    $hashedFilename = md5($filename);
+                                    if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
+                                        $hashedFilename .= '.css';
+                                    }
+                                    if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
+                                        $hashedFilename .= '.js';
+                                    }
+                                    $fileList['hashed'][$filename] = $hashedFilename;
+                                    file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
+                                    // echo "filename = $hashedFilename <br>";
+                                    $fileList['saved'][$filename] = true;
+                                    $fileList['saved'][$hashedFilename] = true;
+                                // } else 
+                                //     $fileList['saved'][$filename] = true;
+                            }
+                        }
+                        $subMatch = substr($match, 0, $urlOffset);
+                        $repSubMatch = $this->replaceUrls($subMatch, $rp, 
+                            $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                        if ($repSubMatch !== $subMatch) {
+                            // echo "subMatch = $subMatch <br>";
+                            // echo "repSubMatch = $repSubMatch <br>";
+                            $loopState['continue'] = true;
+                            $replaceStr = $repSubMatch 
+                                . substr($match, $urlOffset, strlen($match));
+                            // echo "recursive replaceStr = $replaceStr <br>";
+                            return $replaceStr;
+                        }
+                        $replaceStr = $rp["replace"];
+                        for ($j=1; $j<=$numGroup; $j+=1) {
+                            $hashedFilename = $filename;
+                            if (isset($fileList['hashed'][$filename])) {
+                                $hashedFilename = $fileList['hashed'][$filename];
+                            }
+                            $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
+                            $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
+                        }
+                        // echo "regex replaceStr = $replaceStr <br>";
+                        return $replaceStr;
+                    }, 
+                    $content
+                );
+            }
+            return $content;
+        }
+
     function saveTempContent($content)
     {
         $settings = $this->settings;
@@ -139,115 +245,10 @@ class Exporter
         $fileList = [
             'saved' => [],
             'hashed' => []
-        ];
-        function replaceUrls($content, $rp, & $fileList, 
-            $scheme, $httpHost, $baseUrl, $tempPath) {
-            $numGroup = 0;
-            $regex = '~\{group(\d+)\}~';
-            preg_match_all($regex, $rp["replace"], $matches);
-            // echo "group matches = "; print_r($matches); echo "<br>";
-            foreach ($matches[1] as $match) {
-                if ((int)$match > $numGroup)
-                    $numGroup = (int)$match;
-            }
-            $urlOrder = 1;
-            while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
-                $urlOrder += 1;
-            }
-            // echo "numGroup = $numGroup <br>";
-            // echo "urlOrder = $urlOrder <br>";
-            $loopState = [ 'continue' => true ];
-            while ($loopState['continue']) {
-                $loopState['continue'] = false;
-                $content = preg_replace_callback(
-                    $rp["regex"], 
-                    function ($matches) use ($rp, & $fileList, 
-                        $scheme, $httpHost, $baseUrl, 
-                        $tempPath, $numGroup, $urlOrder, & $loopState) {
-                        // echo "matches = "; print_r($matches); echo "<br>";
-                        $match = $matches[0];
-                        // echo "match = $match <br>";
-                        $url = $matches[$urlOrder];
-                        $urlOffset = strpos($match, $url);
-                        $url = str_replace('\\', "", $url);
-                        // echo "url1 = $url <br>";
-                        
-                        if (substr($url, 0, 2) === '//') {
-                            $url = $scheme . ":" . $url;
-                        } else if (substr($url, 0, 1) === '/') {
-                            $url = $httpHost . $url;
-                        } else if (substr($url, 0, 4) !== 'http') {
-                            $url = $baseUrl . '/' . $url;
-                        }
-                        $filename = basename($url);
-                        // print_r($fileList); echo "<br>";
-                        if (! isset($fileList['saved'][$filename])) {
-                            // echo "repurl = $url <br>";
-                            // echo "filename = $filename <br>";
-                            // echo "url2 = $url <br><br>";
-                            $fileContent = file_get_contents($url);
-                            if ($fileContent) {
-                                if ($matches[1] === 'link') {
-                                    $urlRP = [
-                                        "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
-                                        "replace" => "url('{group1}')",
-                                        "urlGroup" => "{group1}"
-                                    ];
-                                    $fileContent = replaceUrls($fileContent, $urlRP, 
-                                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
-                                }
-                                // echo "url=$url<br>";
-                                // echo "filename=$filename<br>";
-                                // file_put_contents($tempPath . "/" . $filename, $fileContent);
-                                // if (! file_exists($tempPath . "/" . $filename)) {
-                                    $hashedFilename = md5($filename);
-                                    if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
-                                        $hashedFilename .= '.css';
-                                    }
-                                    if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
-                                        $hashedFilename .= '.js';
-                                    }
-                                    $fileList['hashed'][$filename] = $hashedFilename;
-                                    file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
-                                    // echo "filename = $hashedFilename <br>";
-                                    $fileList['saved'][$filename] = true;
-                                    $fileList['saved'][$hashedFilename] = true;
-                                // } else 
-                                //     $fileList['saved'][$filename] = true;
-                            }
-                        }
-                        $subMatch = substr($match, 0, $urlOffset);
-                        $repSubMatch = replaceUrls($subMatch, $rp, 
-                            $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
-                        if ($repSubMatch !== $subMatch) {
-                            // echo "subMatch = $subMatch <br>";
-                            // echo "repSubMatch = $repSubMatch <br>";
-                            $loopState['continue'] = true;
-                            $replaceStr = $repSubMatch 
-                                . substr($match, $urlOffset, strlen($match));
-                            // echo "recursive replaceStr = $replaceStr <br>";
-                            return $replaceStr;
-                        }
-                        $replaceStr = $rp["replace"];
-                        for ($j=1; $j<=$numGroup; $j+=1) {
-                            $hashedFilename = $filename;
-                            if (isset($fileList['hashed'][$filename])) {
-                                $hashedFilename = $fileList['hashed'][$filename];
-                            }
-                            $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
-                            $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
-                        }
-                        // echo "regex replaceStr = $replaceStr <br>";
-                        return $replaceStr;
-                    }, 
-                    $content
-                );
-            }
-            return $content;
-        }
+        ];        
 
         foreach ($resourcePatterns as $rp) {
-            $content = replaceUrls($content, $rp, $fileList, 
+            $content = $this->replaceUrls($content, $rp, $fileList, 
                 $scheme, $httpHost, $baseUrl, $tempPath);
             // break;
         }
