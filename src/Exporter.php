@@ -26,15 +26,9 @@ class Exporter
         $this->authentication = $authentication;
     }
 
-    public static function create($authentication = null) 
-    {
-        $exporter = new Exporter($authentication);
-        return $exporter;
-    }
-
     function zipWholeFolder($path, $zipName) {
         // Get real path for our folder
-        $rootPath = realpath($path);
+        $realPath = realpath($path);
 
         // Initialize archive object
         $zip = new \ZipArchive();
@@ -43,7 +37,7 @@ class Exporter
         // Create recursive directory iterator
         /** @var SplFileInfo[] $files */
         $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($rootPath),
+            new \RecursiveDirectoryIterator($realPath),
             \RecursiveIteratorIterator::LEAVES_ONLY
         );
 
@@ -54,7 +48,7 @@ class Exporter
             {
                 // Get real and relative path for current file
                 $filePath = $file->getRealPath();
-                $relativePath = substr($filePath, strlen($rootPath) + 1);
+                $relativePath = substr($filePath, strlen($realPath) + 1);
 
                 // Add current file to archive
                 $zip->addFile($filePath, $relativePath);
@@ -65,116 +59,111 @@ class Exporter
         $zip->close();
     }
 
-    function toFilename($filename)
-    {
-        return md5($filename);
-    }
-
     function replaceUrls($content, $rp, & $fileList, 
-            $scheme, $httpHost, $baseUrl, $tempPath) {
-            $numGroup = 0;
-            $regex = '~\{group(\d+)\}~';
-            preg_match_all($regex, $rp["replace"], $matches);
-            // echo "group matches = "; print_r($matches); echo "<br>";
-            foreach ($matches[1] as $match) {
-                if ((int)$match > $numGroup)
-                    $numGroup = (int)$match;
-            }
-            $urlOrder = 1;
-            while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
-                $urlOrder += 1;
-            }
-            // echo "numGroup = $numGroup <br>";
-            // echo "urlOrder = $urlOrder <br>";
-            $loopState = [ 'continue' => true ];
-            while ($loopState['continue']) {
-                $loopState['continue'] = false;
-                $content = preg_replace_callback(
-                    $rp["regex"], 
-                    function ($matches) use ($rp, & $fileList, 
-                        $scheme, $httpHost, $baseUrl, 
-                        $tempPath, $numGroup, $urlOrder, & $loopState) {
-                        // echo "matches = "; print_r($matches); echo "<br>";
-                        $match = $matches[0];
-                        // echo "match = $match <br>";
-                        $url = $matches[$urlOrder];
-                        $urlOffset = strpos($match, $url);
-                        $url = str_replace('\\', "", $url);
-                        // echo "url1 = $url <br>";
-                        
-                        if (substr($url, 0, 2) === '//') {
-                            $url = $scheme . ":" . $url;
-                        } else if (substr($url, 0, 1) === '/') {
-                            $url = $httpHost . $url;
-                        } else if (substr($url, 0, 4) !== 'http') {
-                            $url = $baseUrl . '/' . $url;
-                        }
-                        $filename = basename($url);
-                        // print_r($fileList); echo "<br>";
-                        if (! isset($fileList['saved'][$filename])) {
-                            // echo "repurl = $url <br>";
-                            // echo "filename = $filename <br>";
-                            // echo "url2 = $url <br><br>";
-                            $fileContent = file_get_contents($url);
-                            if ($fileContent) {
-                                if ($matches[1] === 'link') {
-                                    $urlRP = [
-                                        "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
-                                        "replace" => "url('{group1}')",
-                                        "urlGroup" => "{group1}"
-                                    ];
-                                    $fileContent = $this->replaceUrls($fileContent, $urlRP, 
-                                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
-                                }
-                                // echo "url=$url<br>";
-                                // echo "filename=$filename<br>";
-                                // file_put_contents($tempPath . "/" . $filename, $fileContent);
-                                // if (! file_exists($tempPath . "/" . $filename)) {
-                                    $hashedFilename = md5($filename);
-                                    if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
-                                        $hashedFilename .= '.css';
-                                    }
-                                    if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
-                                        $hashedFilename .= '.js';
-                                    }
-                                    $fileList['hashed'][$filename] = $hashedFilename;
-                                    file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
-                                    // echo "filename = $hashedFilename <br>";
-                                    $fileList['saved'][$filename] = true;
-                                    $fileList['saved'][$hashedFilename] = true;
-                                // } else 
-                                //     $fileList['saved'][$filename] = true;
-                            }
-                        }
-                        $subMatch = substr($match, 0, $urlOffset);
-                        $repSubMatch = $this->replaceUrls($subMatch, $rp, 
-                            $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
-                        if ($repSubMatch !== $subMatch) {
-                            // echo "subMatch = $subMatch <br>";
-                            // echo "repSubMatch = $repSubMatch <br>";
-                            $loopState['continue'] = true;
-                            $replaceStr = $repSubMatch 
-                                . substr($match, $urlOffset, strlen($match));
-                            // echo "recursive replaceStr = $replaceStr <br>";
-                            return $replaceStr;
-                        }
-                        $replaceStr = $rp["replace"];
-                        for ($j=1; $j<=$numGroup; $j+=1) {
-                            $hashedFilename = $filename;
-                            if (isset($fileList['hashed'][$filename])) {
-                                $hashedFilename = $fileList['hashed'][$filename];
-                            }
-                            $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
-                            $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
-                        }
-                        // echo "regex replaceStr = $replaceStr <br>";
-                        return $replaceStr;
-                    }, 
-                    $content
-                );
-            }
-            return $content;
+        $scheme, $httpHost, $baseUrl, $tempPath) {
+        $numGroup = 0;
+        $regex = '~\{group(\d+)\}~';
+        preg_match_all($regex, $rp["replace"], $matches);
+        // echo "group matches = "; print_r($matches); echo "<br>";
+        foreach ($matches[1] as $match) {
+            if ((int)$match > $numGroup)
+                $numGroup = (int)$match;
         }
+        $urlOrder = 1;
+        while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
+            $urlOrder += 1;
+        }
+        // echo "numGroup = $numGroup <br>";
+        // echo "urlOrder = $urlOrder <br>";
+        $loopState = [ 'continue' => true ];
+        while ($loopState['continue']) {
+            $loopState['continue'] = false;
+            $content = preg_replace_callback(
+                $rp["regex"], 
+                function ($matches) use ($rp, & $fileList, 
+                    $scheme, $httpHost, $baseUrl, 
+                    $tempPath, $numGroup, $urlOrder, & $loopState) {
+                    // echo "matches = "; print_r($matches); echo "<br>";
+                    $match = $matches[0];
+                    // echo "match = $match <br>";
+                    $url = $matches[$urlOrder];
+                    $urlOffset = strpos($match, $url);
+                    $url = str_replace('\\', "", $url);
+                    // echo "url1 = $url <br>";
+                    
+                    if (substr($url, 0, 2) === '//') {
+                        $url = $scheme . ":" . $url;
+                    } else if (substr($url, 0, 1) === '/') {
+                        $url = $httpHost . $url;
+                    } else if (substr($url, 0, 4) !== 'http') {
+                        $url = $baseUrl . '/' . $url;
+                    }
+                    $filename = basename($url);
+                    // print_r($fileList); echo "<br>";
+                    if (! isset($fileList['saved'][$filename])) {
+                        // echo "repurl = $url <br>";
+                        // echo "filename = $filename <br>";
+                        // echo "url2 = $url <br><br>";
+                        $fileContent = file_get_contents($url);
+                        if ($fileContent) {
+                            if ($matches[1] === 'link') {
+                                $urlRP = [
+                                    "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
+                                    "replace" => "url('{group1}')",
+                                    "urlGroup" => "{group1}"
+                                ];
+                                $fileContent = $this->replaceUrls($fileContent, $urlRP, 
+                                    $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                            }
+                            // echo "url=$url<br>";
+                            // echo "filename=$filename<br>";
+                            // file_put_contents($tempPath . "/" . $filename, $fileContent);
+                            // if (! file_exists($tempPath . "/" . $filename)) {
+                                $hashedFilename = md5($filename);
+                                if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
+                                    $hashedFilename .= '.css';
+                                }
+                                if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
+                                    $hashedFilename .= '.js';
+                                }
+                                $fileList['hashed'][$filename] = $hashedFilename;
+                                file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
+                                // echo "filename = $hashedFilename <br>";
+                                $fileList['saved'][$filename] = true;
+                                $fileList['saved'][$hashedFilename] = true;
+                            // } else 
+                            //     $fileList['saved'][$filename] = true;
+                        }
+                    }
+                    $subMatch = substr($match, 0, $urlOffset);
+                    $repSubMatch = $this->replaceUrls($subMatch, $rp, 
+                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                    if ($repSubMatch !== $subMatch) {
+                        // echo "subMatch = $subMatch <br>";
+                        // echo "repSubMatch = $repSubMatch <br>";
+                        $loopState['continue'] = true;
+                        $replaceStr = $repSubMatch 
+                            . substr($match, $urlOffset, strlen($match));
+                        // echo "recursive replaceStr = $replaceStr <br>";
+                        return $replaceStr;
+                    }
+                    $replaceStr = $rp["replace"];
+                    for ($j=1; $j<=$numGroup; $j+=1) {
+                        $hashedFilename = $filename;
+                        if (isset($fileList['hashed'][$filename])) {
+                            $hashedFilename = $fileList['hashed'][$filename];
+                        }
+                        $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
+                        $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
+                    }
+                    // echo "regex replaceStr = $replaceStr <br>";
+                    return $replaceStr;
+                }, 
+                $content
+            );
+        }
+        return $content;
+    }
 
     function saveTempContent($content)
     {
@@ -217,9 +206,6 @@ class Exporter
         while (substr($baseUrl, -1) === "/") {
             $baseUrl = substr($baseUrl, 0, strlen($baseUrl) - 1);
         }
-        // echo "httpHost = $httpHost <br>";
-        // echo "baseUrl = $baseUrl <br>";
-        // exit;
 
         $resourcePatterns = [
             [
@@ -240,30 +226,20 @@ class Exporter
         ];
         $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
-        // print_r($resourcePatterns); 
-        // exit();
-        $fileList = [
-            'saved' => [],
-            'hashed' => []
-        ];        
-
+        $fileList = ['saved' => [], 'hashed' => []];        
         foreach ($resourcePatterns as $rp) {
             $content = $this->replaceUrls($content, $rp, $fileList, 
                 $scheme, $httpHost, $baseUrl, $tempPath);
-            // break;
         }
 
-        // echo ($content); 
         // echo htmlentities($content); 
-        
         // exit();
 
         $exportHtmlPath = $tempPath . "/" . "export.html";
         if(file_put_contents($exportHtmlPath, $content)) {
             $this->zipWholeFolder($tempPath, $tempZipPath);
             return [$exportHtmlPath, $tempZipPath, $tempZipName];
-        }
-        else {
+        } else {
             throw new \Exception("Could not save content to temporary folder");
             return false;
         }
@@ -336,10 +312,6 @@ class Exporter
             'waitUntil' => self::get($settings, 'pageWaiting', 'load'), //load, omcontentloaded, networkidle0, networkidle2
             'engine' => self::get($settings, 'engine', 'chromeheadless'), //default null or using chrome headless, "wkhtmltopdf"
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
-            // 'htmlContent' => '',
-            // 'url' => '',
-            // https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagepdfoptions
-            // https://github.com/GoogleChrome/puppeteer/blob/master/docs/api.md#pagescreenshotoptions
             'options' => json_encode($options)
         );
         $ch = curl_init();
@@ -377,6 +349,14 @@ class Exporter
         }
         curl_close($ch);
         ob_end_clean();
+        $useLocalTempFolder = self::get($settings, 'useLocalTempFolder', false);
+        $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteTempFile', false);
+        if ($useLocalTempFolder && $autoDeleteLocalTempFile) {
+            $tempFolder = substr($tempZipPath, 0, -4);
+            array_map('unlink', glob("$tempFolder/*"));
+            rmdir($tempFolder);
+            unlink($tempZipPath);
+        }
         return $response;
     }
 
