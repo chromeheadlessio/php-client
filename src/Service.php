@@ -44,7 +44,7 @@ class Service
         return $this;
     }
 
-    public function save($filepath = 'export.pdf')
+    public function save($filePath = 'export.pdf')
     {
         if(file_put_contents($filePath, $this->exportContent)) {
             return $this;
@@ -82,10 +82,10 @@ class Service
         header("Content-Disposition: $disposition; filename=\"$filename\"");
         header("Content-Transfer-Encoding: binary");
         header("Content-Length: " . strlen($this->exportContent));
-        
+
         echo $this->exportContent;
 
         return $this;
     }
-    
+
 }
