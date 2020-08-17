@@ -305,6 +305,10 @@ class Exporter
         }
 
         list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
+        // $tempFolder = dirname($tempZipPath);
+        // echo "tempZipPath=$tempZipPath<br>";
+        // echo "tempFolder=$tempFolder<br>";
+        // exit;
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
@@ -350,12 +354,16 @@ class Exporter
         curl_close($ch);
         ob_end_clean();
         $useLocalTempFolder = self::get($settings, 'useLocalTempFolder', false);
-        $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteTempFile', false);
+        $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteLocalTempFile', false);
         if ($useLocalTempFolder && $autoDeleteLocalTempFile) {
-            $tempFolder = substr($tempZipPath, 0, -4);
-            array_map('unlink', glob("$tempFolder/*"));
-            rmdir($tempFolder);
-            unlink($tempZipPath);
+            $tempFolder = dirname($tempZipPath);
+            $dir = $tempFolder;
+            $di = new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS);
+            $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
+            foreach ( $ri as $file ) {
+                $file->isDir() ? 
+                    rmdir($file->getPathname()) : unlink($file->getPathname());
+            }
         }
         return $response;
     }
