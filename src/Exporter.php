@@ -4,9 +4,30 @@ namespace chromeheadlessio;
 
 class Exporter
 {
-    static function get($arr,$keys,$default=null)
+
+    static function url_get_contents($url)
     {
-        if(! is_array($arr)) {
+        if (function_exists('file_get_contents')) {
+            $url_get_contents_data = file_get_contents($url);
+        } elseif (function_exists('fopen') && function_exists('stream_get_contents')) {
+            $handle = fopen($url, "r");
+            $url_get_contents_data = stream_get_contents($handle);
+        } elseif (function_exists('curl_exec')) {
+            $conn = curl_init($url);
+            curl_setopt($conn, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($conn, CURLOPT_FRESH_CONNECT,  true);
+            curl_setopt($conn, CURLOPT_RETURNTRANSFER, 1);
+            $url_get_contents_data = (curl_exec($conn));
+            curl_close($conn);
+        } else {
+            $url_get_contents_data = false;
+        }
+        return $url_get_contents_data;
+    }
+
+    static function get($arr, $keys, $default = null)
+    {
+        if (!is_array($arr)) {
             return $default;
         }
         if (is_array($keys) and count($keys) > 0) {
@@ -17,7 +38,7 @@ class Exporter
         }
         if (is_string($keys) || is_int($keys)) {
             return isset($arr[$keys]) ? $arr[$keys] : $default;
-        } 
+        }
         return $default;
     }
 
@@ -26,7 +47,8 @@ class Exporter
         $this->authentication = $authentication;
     }
 
-    function zipWholeFolder($path, $zipName) {
+    function zipWholeFolder($path, $zipName)
+    {
         // Get real path for our folder
         $realPath = realpath($path);
 
@@ -41,11 +63,9 @@ class Exporter
             \RecursiveIteratorIterator::LEAVES_ONLY
         );
 
-        foreach ($files as $name => $file)
-        {
+        foreach ($files as $name => $file) {
             // Skip directories (they would be added automatically)
-            if (!$file->isDir())
-            {
+            if (!$file->isDir()) {
                 // Get real and relative path for current file
                 $filePath = $file->getRealPath();
                 $relativePath = substr($filePath, strlen($realPath) + 1);
@@ -59,8 +79,15 @@ class Exporter
         $zip->close();
     }
 
-    function replaceUrls($content, $rp, & $fileList, 
-        $scheme, $httpHost, $baseUrl, $tempPath) {
+    function replaceUrls(
+        $content,
+        $rp,
+        &$fileList,
+        $scheme,
+        $httpHost,
+        $baseUrl,
+        $tempPath
+    ) {
         $numGroup = 0;
         $regex = '~\{group(\d+)\}~';
         preg_match_all($regex, $rp["replace"], $matches);
@@ -75,14 +102,22 @@ class Exporter
         }
         // echo "numGroup = $numGroup <br>";
         // echo "urlOrder = $urlOrder <br>";
-        $loopState = [ 'continue' => true ];
+        $loopState = ['continue' => true];
         while ($loopState['continue']) {
             $loopState['continue'] = false;
             $content = preg_replace_callback(
-                $rp["regex"], 
-                function ($matches) use ($rp, & $fileList, 
-                    $scheme, $httpHost, $baseUrl, 
-                    $tempPath, $numGroup, $urlOrder, & $loopState) {
+                $rp["regex"],
+                function ($matches) use (
+                    $rp,
+                    &$fileList,
+                    $scheme,
+                    $httpHost,
+                    $baseUrl,
+                    $tempPath,
+                    $numGroup,
+                    $urlOrder,
+                    &$loopState
+                ) {
                     // echo "matches = "; print_r($matches); echo "<br>";
                     $match = $matches[0];
                     // echo "match = $match <br>";
@@ -90,7 +125,7 @@ class Exporter
                     $urlOffset = strpos($match, $url);
                     $url = str_replace('\\', "", $url);
                     // echo "url1 = $url <br>";
-                    
+
                     if (substr($url, 0, 2) === '//') {
                         $url = $scheme . ":" . $url;
                     } else if (substr($url, 0, 1) === '/') {
@@ -100,11 +135,12 @@ class Exporter
                     }
                     $filename = basename($url);
                     // print_r($fileList); echo "<br>";
-                    if (! isset($fileList['saved'][$filename])) {
+                    if (!isset($fileList['saved'][$filename])) {
                         // echo "repurl = $url <br>";
                         // echo "filename = $filename <br>";
                         // echo "url2 = $url <br><br>";
-                        $fileContent = file_get_contents($url);
+                        // $fileContent = file_get_contents($url);
+                        $fileContent = $this->url_get_contents($url);
                         if ($fileContent) {
                             if ($matches[1] === 'link') {
                                 $urlRP = [
@@ -112,43 +148,59 @@ class Exporter
                                     "replace" => "url('{group1}')",
                                     "urlGroup" => "{group1}"
                                 ];
-                                $fileContent = $this->replaceUrls($fileContent, $urlRP, 
-                                    $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                                $fileContent = $this->replaceUrls(
+                                    $fileContent,
+                                    $urlRP,
+                                    $fileList,
+                                    $scheme,
+                                    $httpHost,
+                                    $baseUrl,
+                                    $tempPath
+                                );
                             }
                             // echo "url=$url<br>";
                             // echo "filename=$filename<br>";
                             // file_put_contents($tempPath . "/" . $filename, $fileContent);
                             // if (! file_exists($tempPath . "/" . $filename)) {
-                                $hashedFilename = md5($filename);
-                                if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
-                                    $hashedFilename .= '.css';
-                                }
-                                if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
-                                    $hashedFilename .= '.js';
-                                }
-                                $fileList['hashed'][$filename] = $hashedFilename;
+                            $hashedFilename = md5($filename);
+                            if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
+                                $hashedFilename .= '.css';
+                            }
+                            if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
+                                $hashedFilename .= '.js';
+                            }
+                            $fileList['hashed'][$filename] = $hashedFilename;
+                            if (! empty($fileContent)) {
                                 file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
-                                // echo "filename = $hashedFilename <br>";
-                                $fileList['saved'][$filename] = true;
-                                $fileList['saved'][$hashedFilename] = true;
+                            }
+                            // echo "filename = $hashedFilename <br>";
+                            $fileList['saved'][$filename] = true;
+                            $fileList['saved'][$hashedFilename] = true;
                             // } else 
                             //     $fileList['saved'][$filename] = true;
                         }
                     }
                     $subMatch = substr($match, 0, $urlOffset);
-                    $repSubMatch = $this->replaceUrls($subMatch, $rp, 
-                        $fileList, $scheme, $httpHost, $baseUrl, $tempPath);
+                    $repSubMatch = $this->replaceUrls(
+                        $subMatch,
+                        $rp,
+                        $fileList,
+                        $scheme,
+                        $httpHost,
+                        $baseUrl,
+                        $tempPath
+                    );
                     if ($repSubMatch !== $subMatch) {
                         // echo "subMatch = $subMatch <br>";
                         // echo "repSubMatch = $repSubMatch <br>";
                         $loopState['continue'] = true;
-                        $replaceStr = $repSubMatch 
+                        $replaceStr = $repSubMatch
                             . substr($match, $urlOffset, strlen($match));
                         // echo "recursive replaceStr = $replaceStr <br>";
                         return $replaceStr;
                     }
                     $replaceStr = $rp["replace"];
-                    for ($j=1; $j<=$numGroup; $j+=1) {
+                    for ($j = 1; $j <= $numGroup; $j += 1) {
                         $hashedFilename = $filename;
                         if (isset($fileList['hashed'][$filename])) {
                             $hashedFilename = $fileList['hashed'][$filename];
@@ -158,7 +210,7 @@ class Exporter
                     }
                     // echo "regex replaceStr = $replaceStr <br>";
                     return $replaceStr;
-                }, 
+                },
                 $content
             );
         }
@@ -178,20 +230,23 @@ class Exporter
 
         $scheme = $this->getLocalProtocol();
         $httpHost = self::get($settings, 'httpHost', $this->getLocalHttpHost());
-        $baseUrl = self::get($settings, 'url', 
-            self::get($settings, 'baseUrl', $this->getLocalUrl()));
+        $baseUrl = self::get(
+            $settings,
+            'url',
+            self::get($settings, 'baseUrl', $this->getLocalUrl())
+        );
         // echo $baseUrl; echo "<br>";
         $parseUrl = parse_url($baseUrl);
         // echo "parseUrl ="; print_r($parseUrl); echo "<br>";
-        if (! empty($parseUrl["host"])) {
-            $scheme   = isset($parseUrl['scheme']) ? 
+        if (!empty($parseUrl["host"])) {
+            $scheme   = isset($parseUrl['scheme']) ?
                 $parseUrl['scheme'] : $this->getLocalProtocol();
             // $scheme .= "://";
-            $host = $parseUrl['host']; 
-            $port = isset($parseUrl['port']) ? ':' . $parseUrl['port'] : ''; 
-            $user = isset($parseUrl['user']) ? $parseUrl['user'] : ''; 
-            $pass = isset($parseUrl['pass']) ? ':' . $parseUrl['pass']  : ''; 
-            $pass = ($user || $pass) ? "$pass@" : ''; 
+            $host = $parseUrl['host'];
+            $port = isset($parseUrl['port']) ? ':' . $parseUrl['port'] : '';
+            $user = isset($parseUrl['user']) ? $parseUrl['user'] : '';
+            $pass = isset($parseUrl['pass']) ? ':' . $parseUrl['pass']  : '';
+            $pass = ($user || $pass) ? "$pass@" : '';
             $path = isset($parseUrl['path']) ? $parseUrl['path'] : '';
             if (substr($path, -4) === '.php') {
                 $path = explode("/", $path);
@@ -226,17 +281,28 @@ class Exporter
         ];
         $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
-        $fileList = ['saved' => [], 'hashed' => []];        
+        $fileList = ['saved' => [], 'hashed' => []];
         foreach ($resourcePatterns as $rp) {
-            $content = $this->replaceUrls($content, $rp, $fileList, 
-                $scheme, $httpHost, $baseUrl, $tempPath);
+            $content = $this->replaceUrls(
+                $content,
+                $rp,
+                $fileList,
+                $scheme,
+                $httpHost,
+                $baseUrl,
+                $tempPath
+            );
         }
 
         // echo htmlentities($content); 
         // exit();
 
         $exportHtmlPath = $tempPath . "/" . "export.html";
-        if(file_put_contents($exportHtmlPath, $content)) {
+        if (empty($content)) {
+            throw new \Exception("Empty export content");
+            return false;
+        }
+        if (file_put_contents($exportHtmlPath, $content)) {
             $this->zipWholeFolder($tempPath, $tempZipPath);
             return [$exportHtmlPath, $tempZipPath, $tempZipName];
         } else {
@@ -249,15 +315,13 @@ class Exporter
     {
         $useLocalTempFolder = isset($this->settings['useLocalTempFolder']) ?
             $this->settings['useLocalTempFolder'] : false;
-        if($useLocalTempFolder)
-        {
+        if ($useLocalTempFolder) {
             // $path = dirname(__FILE__);
             $path = dirname($_SERVER['SCRIPT_FILENAME']);
-            if(!is_dir(realpath($path)."/tmp"))
-            {
-                mkdir(realpath($path)."/tmp");
+            if (!is_dir(realpath($path) . "/tmp")) {
+                mkdir(realpath($path) . "/tmp");
             }
-            return realpath($path)."/tmp";
+            return realpath($path) . "/tmp";
         }
         return sys_get_temp_dir();
     }
@@ -266,9 +330,11 @@ class Exporter
     {
         $https = self::get($_SERVER, 'HTTPS', '');
         $forwardedProto = self::get($_SERVER, 'HTTP_X_FORWARDED_PROTO', '');
-        if ($https==1 ||
-            strcasecmp($https,'on')===0  ||
-            strcasecmp($forwardedProto,'https')===0)
+        if (
+            $https == 1 ||
+            strcasecmp($https, 'on') === 0  ||
+            strcasecmp($forwardedProto, 'https') === 0
+        )
             return 'https';
         return 'http';
     }
@@ -285,10 +351,10 @@ class Exporter
     {
         $localHttpHost = $this->getLocalHttpHost();
         $uri = $_SERVER["REQUEST_URI"];
-        return $localHttpHost.$uri;
+        return $localHttpHost . $uri;
     }
 
-    function cloudRequest($format = 'pdf', $options = []) 
+    function cloudRequest($format = 'pdf', $options = [])
     {
         ob_start();
         $secretToken = self::get($this->authentication, 'secretToken', '');
@@ -319,20 +385,20 @@ class Exporter
             'options' => json_encode($options)
         );
         $ch = curl_init();
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
+        // $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
-        
+
         $curlOptions = array(
             CURLOPT_URL => $target_url,
-            CURLOPT_HEADER => true,
+            CURLOPT_HEADER => false,
             CURLOPT_POST => 1,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $postfields,
             CURLOPT_INFILESIZE => filesize($file_name_with_full_path),
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYHOST=>0,
-            CURLOPT_SSL_VERIFYPEER=>0,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_SSL_VERIFYPEER => 0,
         ); // cURL options
         curl_setopt_array($ch, $curlOptions);
         $response = curl_exec($ch);
@@ -340,15 +406,14 @@ class Exporter
         // echo "curl info = "; print_r($info); echo "<br>";
         // echo "result = $result <br>";
         // exit();
-        if(curl_errno($ch)) {
+        if (curl_errno($ch)) {
             $errmsg = curl_error($ch);
             throw new \Exception("Error when sending request: $errmsg");
-        }
-        else if ($cInfo['http_code'] != 200) {
+        } else if ($cInfo['http_code'] != 200) {
             $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
             $header = substr($response, 0, $headerSize);
             $body = substr($response, $headerSize);
-            echo("Request failed: $body");
+            echo ("Request failed: $body");
             exit();
         }
         curl_close($ch);
@@ -360,12 +425,12 @@ class Exporter
             $dir = $tempFolder;
             $di = new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS);
             $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
-            foreach ( $ri as $file ) {
-                $file->isDir() ? 
+            foreach ($ri as $file) {
+                $file->isDir() ?
                     rmdir($file->getPathname()) : unlink($file->getPathname());
             }
         }
+        // file_put_contents('export.jpeg', $response);
         return $response;
     }
-
 }
