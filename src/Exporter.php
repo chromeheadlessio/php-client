@@ -392,7 +392,7 @@ class Exporter
 
         $curlOptions = array(
             CURLOPT_URL => $target_url,
-            CURLOPT_HEADER => false,
+            CURLOPT_HEADER => false, //don't include header in response
             CURLOPT_POST => 1,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => $postfields,
