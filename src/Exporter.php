@@ -136,28 +136,33 @@ class Exporter
                     $filename = basename($url);
                     // print_r($fileList); echo "<br>";
                     if (!isset($fileList['saved'][$filename])) {
-                        // echo "repurl = $url <br>";
+                        // echo "url = $url <br>";
                         // echo "filename = $filename <br>";
                         // echo "url2 = $url <br><br>";
                         // $fileContent = file_get_contents($url);
                         $fileContent = $this->url_get_contents($url);
                         if ($fileContent) {
-                            if ($matches[1] === 'link') {
+
+                            $endStr = ".css";
+                            if ($matches[1] === 'link' ||
+                                substr($url, -strlen($endStr)) === $endStr) {
                                 $urlRP = [
                                     "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
                                     "replace" => "url('{group1}')",
                                     "urlGroup" => "{group1}"
                                 ];
+                                $thisfileBaseUrl = dirname($url);
                                 $fileContent = $this->replaceUrls(
                                     $fileContent,
                                     $urlRP,
                                     $fileList,
                                     $scheme,
                                     $httpHost,
-                                    $baseUrl,
+                                    $thisfileBaseUrl,
                                     $tempPath
                                 );
                             }
+
                             // echo "url=$url<br>";
                             // echo "filename=$filename<br>";
                             // file_put_contents($tempPath . "/" . $filename, $fileContent);
@@ -372,7 +377,7 @@ class Exporter
         }
 
         list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
-        // $tempFolder = dirname($tempZipPath);
+        $tempFolder = dirname($tempZipPath);
         // echo "tempZipPath=$tempZipPath<br>";
         // echo "tempFolder=$tempFolder<br>";
         // exit;
@@ -404,8 +409,8 @@ class Exporter
         curl_setopt_array($ch, $curlOptions);
         $response = curl_exec($ch);
         $cInfo = curl_getinfo($ch);
-        // echo "curl info = "; print_r($info); echo "<br>";
-        // echo "result = $result <br>";
+        // echo "cInfo = "; print_r($cInfo); echo "<br>";
+        // echo "response = $response <br>";
         // exit();
         if (curl_errno($ch)) {
             $errmsg = curl_error($ch);
