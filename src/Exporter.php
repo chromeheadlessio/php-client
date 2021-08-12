@@ -7,6 +7,7 @@ class Exporter
 
     static function url_get_contents($url)
     {
+        // echo "url_get_contents url=$url<br>";
         try {
             if (function_exists('file_get_contents')) {
                 $url_get_contents_data = file_get_contents($url);
@@ -398,6 +399,7 @@ class Exporter
         $ch = curl_init();
         $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:8000/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
 
         $curlOptions = array(
@@ -424,7 +426,7 @@ class Exporter
             $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
             $header = substr($response, 0, $headerSize);
             $body = substr($response, $headerSize);
-            echo ("Request failed: $body");
+            echo ("Request failed: $header $body");
             exit();
         }
         curl_close($ch);
