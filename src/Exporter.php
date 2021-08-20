@@ -397,9 +397,10 @@ class Exporter
             'options' => ! empty($options) ? json_encode($options) : "{}"
         );
         $ch = curl_init();
-        $CLOUD_EXPORT_SERVICE = "http://localhost:1982/api/export";
-        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io/api/export";
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:8000/api/export";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982";
+        // $CLOUD_EXPORT_SERVICE = "http://localhost:8000";
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io";
+        $CLOUD_EXPORT_SERVICE = self::get($settings, 'serviceUrl', $CLOUD_EXPORT_SERVICE) . "/api/export";
         $target_url = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
 
         $curlOptions = array(
