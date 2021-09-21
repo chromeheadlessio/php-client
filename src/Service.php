@@ -44,7 +44,7 @@ class Service
         return $this;
     }
 
-    public function save($filepath = 'export.pdf')
+    public function save($filePath = 'export.pdf')
     {
         if(file_put_contents($filePath, $this->exportContent)) {
             return $this;
