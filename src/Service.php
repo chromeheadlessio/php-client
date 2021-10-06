@@ -72,7 +72,7 @@ class Service
         } else if($openOnBrowser) {
             $disposition = "inline";
         }
-        $type = "pdf";
+        $type = "application/pdf";
         header("Pragma: public");
         header("Expires: 0");
         header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
