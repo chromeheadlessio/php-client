@@ -1,7 +1,7 @@
 # Change Log
 
 ## Version 1.3.0
-1. Add "serviceUrl" setting to use a local cloud server.
+1. Add "serviceHost", "serviceUrl" setting to use a local cloud server.
 
 ## Version 1.2.0
 1. Add exception catcher for url_get_content.
