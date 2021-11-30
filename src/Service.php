@@ -64,6 +64,22 @@ class Service
         return base64_encode($this->exportContent);
     }
 
+    protected function mimeType($filename)
+    {
+        $dotpos =strrpos($filename, ".");
+        $ext = strtolower(substr($filename, $dotpos+1));
+        $map =array(
+            "pdf"=>"application/pdf",
+            "png"=>"image/png",
+            "jpg"=>"image/jpeg",
+            "bmp"=>"image/bmp",
+            "tiff"=>"image/tiff",
+            "gif"=>"image/gif",
+            "ppm"=>"image/x-portable-pixmap",
+        );
+        return isset($map[$ext]) ? $map[$ext] : $ext;
+    }
+
     public function sendToBrowser($filename, $openOnBrowser = 'attachment')
     {
         $disposition = "attachment";
@@ -72,13 +88,12 @@ class Service
         } else if($openOnBrowser) {
             $disposition = "inline";
         }
-        $type = "pdf";
         header("Pragma: public");
         header("Expires: 0");
         header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
         header("Cache-Control: public");
         header("Content-Description: File Transfer");
-        header("Content-Type: ".$type);
+        header("Content-Type: ".$this->mimeType($filename));
         header("Content-Disposition: $disposition; filename=\"$filename\"");
         header("Content-Transfer-Encoding: binary");
         header("Content-Length: " . strlen($this->exportContent));

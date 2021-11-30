@@ -1,5 +1,8 @@
 # Change Log
 
+## Version 1.3.1
+1. Fix Content-Type in sendToBrowser.
+
 ## Version 1.3.0
 1. Add "serviceHost", "serviceUrl" setting to use a local cloud server.
 
