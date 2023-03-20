@@ -1,5 +1,8 @@
 # Change Log
 
+## Version 1.4.0-dev
+1. Fix dynamic property warning in PHP 8.2
+
 ## Version 1.3.1
 1. Fix Content-Type in sendToBrowser.
 

@@ -4,6 +4,8 @@ namespace chromeheadlessio;
 
 class Exporter
 {
+    protected $settings;
+    protected $authentication;
 
     static function url_get_contents($url)
     {
@@ -414,6 +416,7 @@ class Exporter
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_SSL_VERIFYPEER => 0,
+            // CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
         ); // cURL options
         curl_setopt_array($ch, $curlOptions);
         $response = curl_exec($ch);

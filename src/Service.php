@@ -6,6 +6,10 @@ include "Exporter.php";
 
 class Service
 {
+    protected $authentication;
+    protected $exportContent;
+    protected $Exporter;
+
     function __construct($authentication)
     {
         if (is_string($authentication)) {
