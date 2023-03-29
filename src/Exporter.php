@@ -76,7 +76,7 @@ class Exporter
             if (!$file->isDir()) {
                 // Get real and relative path for current file
                 $filePath = $file->getRealPath();
-                $relativePath = substr($filePath, strlen($realPath) + 1);
+                $relativePath = substr((string) $filePath, strlen((string) $realPath) + 1);
 
                 // Add current file to archive
                 $zip->addFile($filePath, $relativePath);
@@ -105,7 +105,7 @@ class Exporter
                 $numGroup = (int)$match;
         }
         $urlOrder = 1;
-        while (strpos($rp["urlGroup"], "{group$urlOrder}") === false) {
+        while (strpos((string) $rp["urlGroup"], "{group$urlOrder}") === false) {
             $urlOrder += 1;
         }
         // echo "numGroup = $numGroup <br>";
@@ -130,8 +130,8 @@ class Exporter
                     $match = $matches[0];
                     // echo "match = $match <br>";
                     $url = $matches[$urlOrder];
-                    $urlOffset = strpos($match, $url);
-                    $url = str_replace('\\', "", $url);
+                    $urlOffset = strpos((string) $match, (string) $url);
+                    $url = str_replace('\\', "", (string) $url);
                     // echo "url1 = $url <br>";
 
                     if (substr($url, 0, 2) === '//') {
@@ -141,7 +141,7 @@ class Exporter
                     } else if (substr($url, 0, 4) !== 'http') {
                         $url = $baseUrl . '/' . $url;
                     }
-                    $filename = basename($url);
+                    $filename = (string) basename($url);
                     // print_r($fileList); echo "<br>";
                     if (!isset($fileList['saved'][$filename])) {
                         // echo "url = $url <br>";
@@ -389,6 +389,16 @@ class Exporter
         // echo "tempZipPath=$tempZipPath<br>";
         // echo "tempFolder=$tempFolder<br>";
         // exit;
+
+        $margin = isset($options['margin']) ? $options['margin'] : null;
+        if (is_string($margin)) {
+            $options['margin'] = [
+                'top' => $margin,
+                'top' => $margin,
+                'right' => $margin,
+                'top' => $margin,
+            ];
+        }
 
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
