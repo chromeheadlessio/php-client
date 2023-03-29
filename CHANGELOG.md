@@ -1,6 +1,6 @@
 # Change Log
 
-## Version 1.4.0-dev
+## Version 1.4.0
 1. Fix dynamic property warning in PHP 8.2.
 2. Fix margin issue: auto convert string to array. 
 
