@@ -4,8 +4,8 @@ namespace chromeheadlessio;
 
 class Exporter
 {
-    protected $settings;
-    protected $authentication;
+    public $settings;
+    public $authentication;
 
     static function url_get_contents($url)
     {
