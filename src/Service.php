@@ -101,10 +101,10 @@ class Service
         header("Content-Disposition: $disposition; filename=\"$filename\"");
         header("Content-Transfer-Encoding: binary");
         header("Content-Length: " . strlen($this->exportContent));
-        
+
         echo $this->exportContent;
 
         return $this;
     }
-    
+
 }
