@@ -434,6 +434,37 @@ class Exporter
         // echo "cInfo = "; print_r($cInfo); echo "<br>";
         // echo "response = $response <br>";
         // exit();
+
+
+        // $reqMulti = 1;
+        // $reqMulti = 10;
+        // // for ($i = 0; $i < $reqMulti; $i++) {
+        // //     $response = curl_exec($ch);
+        // // }
+        // // $cInfo = curl_getinfo($ch);
+
+        // $curl_arr = array();
+        // $masterHandler = curl_multi_init();
+        // for ($i = 0; $i < $reqMulti; $i++) {
+        //     $curl_arr[$i] = curl_init($target_url);
+        //     curl_setopt_array($curl_arr[$i], $curlOptions);
+        //     curl_multi_add_handle($masterHandler, $curl_arr[$i]);
+        // }
+        // while (true) {
+        //     curl_multi_exec($masterHandler, $running);
+        //     if ($running < 1) break;
+        //     curl_multi_select($masterHandler, 1);
+        // }
+        // for ($i = 0; $i < $reqMulti; $i++) {
+        //     $response = curl_multi_getcontent($curl_arr[$i]);
+        // }
+        // // for ($i = 0; $i < $node_count; $i++) {
+        // //     $results[] = curl_multi_getcontent($curl_arr[$i]);
+        // // }
+        // print_r($results);
+        // exit;
+
+
         if (curl_errno($ch)) {
             $errmsg = curl_error($ch);
             throw new \Exception("Error when sending request: $errmsg");

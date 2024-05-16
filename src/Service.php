@@ -12,6 +12,8 @@ class Service
 
     function __construct($authentication)
     {
+        // error_reporting(E_ERROR | E_PARSE);
+        
         if (is_string($authentication)) {
             $secretToken = $authentication;
             $this->authentication = [
