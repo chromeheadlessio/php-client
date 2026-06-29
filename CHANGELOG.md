@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+1. Fix resource collision: store downloaded resources keyed by their absolute URL (`md5(absoluteUrl)`) instead of `md5(basename)`, so two resources sharing a filename in different folders no longer overwrite each other.
+2. Harden URL resolution: resolve `./` and `../` segments, drop `#fragments`, and ignore query strings when detecting a resource's extension.
+3. Add a zero-dependency test suite (`tests/run-tests.sh`): `resolveUrl` unit cases + a collision integration test served by `php -S`.
+
 ## Version 1.5.0
 1. Verify the export service's TLS certificate by default; add a `verifySsl` setting (`false` to opt out for self-signed / private servers).
 2. Throw an exception instead of calling `exit()` on a failed (non-200) response, so callers can catch and handle/retry it instead of having the host script terminated.

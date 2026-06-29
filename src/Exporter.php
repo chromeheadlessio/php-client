@@ -61,6 +61,56 @@ class Exporter
         return $default;
     }
 
+    // Resolve a (possibly relative) resource URL to an absolute, normalized
+    // URL. Handles protocol-relative (//), root-relative (/), and relative
+    // references (including ./ and ../), strips backslashes and any #fragment.
+    static function resolveUrl($url, $scheme, $httpHost, $baseUrl)
+    {
+        $url = str_replace('\\', "", (string) $url);
+        $hashPos = strpos($url, '#');
+        if ($hashPos !== false) {
+            $url = substr($url, 0, $hashPos);
+        }
+        if ($url === '') {
+            return '';
+        }
+        if (substr($url, 0, 2) === '//') {
+            $url = $scheme . ":" . $url;
+        } else if (substr($url, 0, 1) === '/') {
+            $url = $httpHost . $url;
+        } else if (substr($url, 0, 4) !== 'http') {
+            $url = $baseUrl . '/' . $url;
+        }
+        return self::normalizeUrlPath($url);
+    }
+
+    // Collapse "." and ".." segments in the path of an absolute http(s) URL,
+    // leaving scheme/host and any query string untouched.
+    static function normalizeUrlPath($url)
+    {
+        if (!preg_match('~^([a-zA-Z][a-zA-Z0-9+.\-]*://[^/]*)(/[^?#]*)?(\?.*)?$~', $url, $m)) {
+            return $url;
+        }
+        $origin = $m[1];
+        $path = isset($m[2]) ? $m[2] : '';
+        $query = isset($m[3]) ? $m[3] : '';
+        if ($path === '') {
+            return $origin . $query;
+        }
+        $out = [];
+        foreach (explode('/', $path) as $seg) {
+            if ($seg === '' || $seg === '.') {
+                continue;
+            }
+            if ($seg === '..') {
+                array_pop($out);
+                continue;
+            }
+            $out[] = $seg;
+        }
+        return $origin . '/' . implode('/', $out) . $query;
+    }
+
     function __construct($authentication = null)
     {
         $this->authentication = $authentication;
@@ -140,21 +190,22 @@ class Exporter
                     // echo "matches = "; print_r($matches); echo "<br>";
                     $match = $matches[0];
                     // echo "match = $match <br>";
-                    $url = $matches[$urlOrder];
-                    $urlOffset = strpos((string) $match, (string) $url);
-                    $url = str_replace('\\', "", (string) $url);
-                    // echo "url1 = $url <br>";
-
-                    if (substr($url, 0, 2) === '//') {
-                        $url = $scheme . ":" . $url;
-                    } else if (substr($url, 0, 1) === '/') {
-                        $url = $httpHost . $url;
-                    } else if (substr($url, 0, 4) !== 'http') {
-                        $url = $baseUrl . '/' . $url;
+                    $rawUrl = $matches[$urlOrder];
+                    // Locate the raw URL inside the match BEFORE resolving it, so
+                    // the prefix-recursion below peels off the correct substring.
+                    $urlOffset = strpos((string) $match, (string) $rawUrl);
+                    // Resolve to an absolute, normalized URL. This absolute URL is
+                    // the collision-free key used to download/store the resource.
+                    $url = self::resolveUrl($rawUrl, $scheme, $httpHost, $baseUrl);
+                    // Basename for extension detection only — strip the query.
+                    $pathForName = $url;
+                    $qPos = strpos($pathForName, '?');
+                    if ($qPos !== false) {
+                        $pathForName = substr($pathForName, 0, $qPos);
                     }
-                    $filename = (string) basename($url);
+                    $filename = (string) basename($pathForName);
                     // print_r($fileList); echo "<br>";
-                    if (!isset($fileList['saved'][$filename])) {
+                    if (!isset($fileList['saved'][$url])) {
                         // echo "url = $url <br>";
                         // echo "filename = $filename <br>";
                         // echo "url2 = $url <br><br>";
@@ -164,7 +215,7 @@ class Exporter
                             self::echo("Has file content<br>");
                             $endStr = ".css";
                             if ($matches[1] === 'link' ||
-                                substr($url, -strlen($endStr)) === $endStr) {
+                                substr($filename, -strlen($endStr)) === $endStr) {
                                 $urlRP = [
                                     "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
                                     "replace" => "url('{group1}')",
@@ -186,15 +237,17 @@ class Exporter
                             // echo "filename=$filename<br>";
                             // file_put_contents($tempPath . "/" . $filename, $fileContent);
                             // if (! file_exists($tempPath . "/" . $filename)) {
-                            // $hashedFilename = $filename;
-                            $hashedFilename = md5($filename);
+                            // Hash the ABSOLUTE url (not the basename) so two
+                            // resources that share a basename in different folders
+                            // get distinct files instead of overwriting each other.
+                            $hashedFilename = md5($url);
                             if ($matches[1] === 'link' || substr($filename, -4) === '.css') {
                                 $hashedFilename .= '.css';
                             }
                             if ($matches[1] === 'script' || substr($filename, -3) === '.js') {
                                 $hashedFilename .= '.js';
                             }
-                            $fileList['hashed'][$filename] = $hashedFilename;
+                            $fileList['hashed'][$url] = $hashedFilename;
                             if (! empty($fileContent)) {
                                 $result = file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
                                 if ($result === false) {
@@ -202,7 +255,7 @@ class Exporter
                                 }
                             }
                             // echo "filename = $hashedFilename <br>";
-                            $fileList['saved'][$filename] = true;
+                            $fileList['saved'][$url] = true;
                             $fileList['saved'][$hashedFilename] = true;
                             // } else 
                             //     $fileList['saved'][$filename] = true;
@@ -234,8 +287,8 @@ class Exporter
                     $replaceStr = $rp["replace"];
                     for ($j = 1; $j <= $numGroup; $j += 1) {
                         $hashedFilename = $filename;
-                        if (isset($fileList['hashed'][$filename])) {
-                            $hashedFilename = $fileList['hashed'][$filename];
+                        if (isset($fileList['hashed'][$url])) {
+                            $hashedFilename = $fileList['hashed'][$url];
                         }
                         $groupStr = $j === $urlOrder ? $hashedFilename : $matches[$j];
                         $replaceStr = str_replace("{group$j}", $groupStr, $replaceStr);
