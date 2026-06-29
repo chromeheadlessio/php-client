@@ -1,0 +1,4 @@
+/* MARKER-MAIN */
+@import "base.css";
+@import url('theme.css');
+body { background: url('../img/bg.png'); }

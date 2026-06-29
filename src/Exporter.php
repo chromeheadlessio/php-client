@@ -111,6 +111,26 @@ class Exporter
         return $origin . '/' . implode('/', $out) . $query;
     }
 
+    // CSS-level resource references. Applied both at the document level (for
+    // inline <style> / style="") AND recursively inside every downloaded .css
+    // file. Covers url(...) and the string form of @import; the url() form of
+    // @import is already covered by the url() pattern.
+    static function cssResourcePatterns()
+    {
+        return [
+            [
+                "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
+                "replace" => "url('{group1}')",
+                "urlGroup" => "{group1}"
+            ],
+            [
+                "regex" => '~@import\s+["\']([^"\']+)["\']~',
+                "replace" => "@import '{group1}'",
+                "urlGroup" => "{group1}"
+            ],
+        ];
+    }
+
     function __construct($authentication = null)
     {
         $this->authentication = $authentication;
@@ -216,21 +236,20 @@ class Exporter
                             $endStr = ".css";
                             if ($matches[1] === 'link' ||
                                 substr($filename, -strlen($endStr)) === $endStr) {
-                                $urlRP = [
-                                    "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
-                                    "replace" => "url('{group1}')",
-                                    "urlGroup" => "{group1}"
-                                ];
                                 $thisfileBaseUrl = dirname($url);
-                                $fileContent = $this->replaceUrls(
-                                    $fileContent,
-                                    $urlRP,
-                                    $fileList,
-                                    $scheme,
-                                    $httpHost,
-                                    $thisfileBaseUrl,
-                                    $tempPath
-                                );
+                                // Resolve every CSS-level reference (url() AND
+                                // @import) inside this stylesheet, recursively.
+                                foreach (self::cssResourcePatterns() as $cssRP) {
+                                    $fileContent = $this->replaceUrls(
+                                        $fileContent,
+                                        $cssRP,
+                                        $fileList,
+                                        $scheme,
+                                        $httpHost,
+                                        $thisfileBaseUrl,
+                                        $tempPath
+                                    );
+                                }
                             }
 
                             // echo "url=$url<br>";
@@ -353,23 +372,21 @@ class Exporter
         self::echo("baseUrl: $baseUrl<br>");
         // exit;
 
-        $resourcePatterns = [
+        $resourcePatterns = array_merge(
             [
-                "regex" => '~<(link)([^>]+)href=["\']([^"\'>]*)["\']~',
-                "replace" => "<{group1}{group2}href='{group3}'",
-                "urlGroup" => "{group3}"
+                [
+                    "regex" => '~<(link)([^>]+)href=["\']([^"\'>]*)["\']~',
+                    "replace" => "<{group1}{group2}href='{group3}'",
+                    "urlGroup" => "{group3}"
+                ],
+                [
+                    "regex" => '~<(script|img|iframe)([^>]+)src=["\']((?!data)[^"\'>]*)["\']~',
+                    "replace" => "<{group1}{group2}src='{group3}'",
+                    "urlGroup" => "{group3}"
+                ],
             ],
-            [
-                "regex" => '~<(script|img|iframe)([^>]+)src=["\']((?!data)[^"\'>]*)["\']~',
-                "replace" => "<{group1}{group2}src='{group3}'",
-                "urlGroup" => "{group3}"
-            ],
-            [
-                "regex" => '~url\(["\']*([^"\'\)]+)["\']*\)~',
-                "replace" => "url('{group1}')",
-                "urlGroup" => "{group1}"
-            ],
-        ];
+            self::cssResourcePatterns()
+        );
         $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
         $fileList = ['saved' => [], 'hashed' => []];

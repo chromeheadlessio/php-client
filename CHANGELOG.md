@@ -1,5 +1,8 @@
 # Change Log
 
+## Unreleased
+1. Support the string form of `@import` (`@import "x.css"`) in addition to `@import url(...)`, both in inline `<style>`/`style=""` and recursively inside downloaded stylesheets (previously the in-CSS recursion only resolved `url()`).
+
 ## Version 1.6.0
 1. Fix resource collision: store downloaded resources keyed by their absolute URL (`md5(absoluteUrl)`) instead of `md5(basename)`, so two resources sharing a filename in different folders no longer overwrite each other.
 2. Harden URL resolution: resolve `./` and `../` segments, drop `#fragments`, and ignore query strings when detecting a resource's extension.

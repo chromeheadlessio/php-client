@@ -24,4 +24,8 @@ done
 php tests/collision_test.php "http://127.0.0.1:${PORT}"
 
 echo
+echo "== @import integration test =="
+php tests/import_test.php "http://127.0.0.1:${PORT}"
+
+echo
 echo "ALL TESTS PASSED"
