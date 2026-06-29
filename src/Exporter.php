@@ -6,18 +6,22 @@ class Exporter
 {
     public $settings;
     public $authentication;
+    static $debug = false;
 
     static function url_get_contents($url)
     {
-        // echo "url_get_contents url=$url<br>";
+        self::echo("url_get_contents url=$url<br>");
         try {
             if (function_exists('file_get_contents')) {
+                // echo "Call file_get_contents<br>";
                 $url_get_contents_data = file_get_contents($url);
             } elseif (function_exists('fopen') && function_exists('stream_get_contents')) {
+                // echo "Call stream_get_contents<br>";
                 $handle = fopen($url, "r");
                 $url_get_contents_data = stream_get_contents($handle);
             } elseif (function_exists('curl_exec')) {
                 $conn = curl_init($url);
+                // echo "Call curl<br>";
                 curl_setopt($conn, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($conn, CURLOPT_FRESH_CONNECT,  true);
                 curl_setopt($conn, CURLOPT_RETURNTRANSFER, 1);
@@ -28,9 +32,16 @@ class Exporter
             }
             return $url_get_contents_data;
         } catch (\Exception $e) {
-            // var_dump($e); exit;
+            self::echo('Exception: ' . $e->getMessage());
         }
         return "";
+    }
+
+    static function echo($msg)
+    {
+        if (self::$debug) {
+            echo $msg;
+        }
     }
 
     static function get($arr, $keys, $default = null)
@@ -150,7 +161,7 @@ class Exporter
                         // $fileContent = file_get_contents($url);
                         $fileContent = $this->url_get_contents($url);
                         if ($fileContent) {
-
+                            self::echo("Has file content<br>");
                             $endStr = ".css";
                             if ($matches[1] === 'link' ||
                                 substr($url, -strlen($endStr)) === $endStr) {
@@ -185,13 +196,20 @@ class Exporter
                             }
                             $fileList['hashed'][$filename] = $hashedFilename;
                             if (! empty($fileContent)) {
-                                file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
+                                $result = file_put_contents($tempPath . "/" . $hashedFilename, $fileContent);
+                                if ($result === false) {
+                                    self::echo("Could not save $filename to temporary folder<br><br>");
+                                }
                             }
                             // echo "filename = $hashedFilename <br>";
                             $fileList['saved'][$filename] = true;
                             $fileList['saved'][$hashedFilename] = true;
                             // } else 
                             //     $fileList['saved'][$filename] = true;
+                        } else if ($fileContent === false) {
+                            self::echo("Failed to get file content<br>");
+                        } else {
+                            self::echo("Empty file content<br>");
                         }
                     }
                     $subMatch = substr($match, 0, $urlOffset);
@@ -240,16 +258,20 @@ class Exporter
         $tempZipName = $tempDirName . ".zip";
         $tempZipPath = $tmpFolder . "/" . $tempZipName;
         $tempPath = $tmpFolder . "/" . $tempDirName;
-        mkdir($tempPath);
+        if (!is_dir($tempPath)) {
+            mkdir($tempPath);
+        }
 
         $scheme = $this->getLocalProtocol();
         $httpHost = self::get($settings, 'httpHost', $this->getLocalHttpHost());
+        self::echo("httpHost: $httpHost<br>");
         $baseUrl = self::get(
             $settings,
             'url',
             self::get($settings, 'baseUrl', $this->getLocalUrl())
         );
         // echo $baseUrl; echo "<br>";
+        // exit;
         $parseUrl = parse_url($baseUrl);
         // echo "parseUrl ="; print_r($parseUrl); echo "<br>";
         if (!empty($parseUrl["host"])) {
@@ -275,6 +297,8 @@ class Exporter
         while (substr($baseUrl, -1) === "/") {
             $baseUrl = substr($baseUrl, 0, strlen($baseUrl) - 1);
         }
+        self::echo("baseUrl: $baseUrl<br>");
+        // exit;
 
         $resourcePatterns = [
             [
@@ -308,15 +332,19 @@ class Exporter
             );
         }
 
-        // echo htmlentities($content); 
-        // exit();
+        self::echo("tempPath: $tempPath<br><br>");
+        if (!is_writable($tempPath)) {
+            throw new \Exception("$tempPath is not writable!<br><br>");
+        }
 
+        self::echo("content: " . htmlentities($content) . "<br><br>"); 
+        // exit();
         $exportHtmlPath = $tempPath . "/" . "export.html";
         if (empty($content)) {
             throw new \Exception("Empty export content");
             return false;
         }
-        if (file_put_contents($exportHtmlPath, $content)) {
+        if (file_put_contents($exportHtmlPath, $content) !== false) {
             $this->zipWholeFolder($tempPath, $tempZipPath);
             return [$exportHtmlPath, $tempZipPath, $tempZipName];
         } else {
@@ -368,9 +396,32 @@ class Exporter
         return $localHttpHost . $uri;
     }
 
+    // Remove only THIS request's own temp artifacts: the uniqid extract dir
+    // and its zip. Never touches the parent temp folder, so it is safe even
+    // when tmp is the shared system temp dir (sys_get_temp_dir()).
+    function cleanupTempArtifacts($tempZipPath)
+    {
+        $tempExtractDir = substr($tempZipPath, 0, -strlen('.zip'));
+        if (is_dir($tempExtractDir)) {
+            $di = new \RecursiveDirectoryIterator($tempExtractDir, \FilesystemIterator::SKIP_DOTS);
+            $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
+            foreach ($ri as $file) {
+                $file->isDir() ? @rmdir($file->getPathname()) : @unlink($file->getPathname());
+            }
+            @rmdir($tempExtractDir);
+        }
+        if (is_file($tempZipPath)) {
+            @unlink($tempZipPath);
+        }
+    }
+
     function cloudRequest($format = 'pdf', $options = [])
     {
-        ob_start();
+        self::$debug = self::get($this->settings, 'debug');
+        if (!self::$debug) {
+            // echo "ob_start called<br><br>";
+            ob_start();
+        }
         $secretToken = self::get($this->authentication, 'secretToken', '');
         $headers = array(
             "Content-Type:multipart/form-data",
@@ -394,9 +445,9 @@ class Exporter
         if (is_string($margin)) {
             $options['margin'] = [
                 'top' => $margin,
-                'top' => $margin,
+                'bottom' => $margin,
                 'right' => $margin,
-                'top' => $margin,
+                'left' => $margin,
             ];
         }
 
@@ -416,6 +467,11 @@ class Exporter
         $serviceHost = rtrim($serviceHost, "/");
         $target_url = self::get($settings, 'serviceUrl', $serviceHost . "/api/export");
 
+        // Verify the service's TLS cert by default — the request carries the
+        // Bearer token + report content. Self-signed / private export servers
+        // can opt out with settings.verifySsl = false.
+        $verifySsl = self::get($settings, 'verifySsl', true);
+
         $curlOptions = array(
             CURLOPT_URL => $target_url,
             CURLOPT_HEADER => false, //don't include header in response
@@ -424,72 +480,51 @@ class Exporter
             CURLOPT_POSTFIELDS => $postfields,
             CURLOPT_INFILESIZE => filesize($file_name_with_full_path),
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYHOST => 0,
-            CURLOPT_SSL_VERIFYPEER => 0,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            // Bound the request so a stalled service can't hang the host script
+            // indefinitely. 140s > service JOB_DEADLINE_MS (120s) + margin, and
+            // matches the nginx proxy_read_timeout. Override via settings.timeout.
+            CURLOPT_TIMEOUT => self::get($settings, 'timeout', 140),
+            CURLOPT_SSL_VERIFYHOST => $verifySsl ? 2 : 0,
+            CURLOPT_SSL_VERIFYPEER => $verifySsl,
             // CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
         ); // cURL options
         curl_setopt_array($ch, $curlOptions);
-        $response = curl_exec($ch);
-        $cInfo = curl_getinfo($ch);
-        // echo "cInfo = "; print_r($cInfo); echo "<br>";
-        // echo "response = $response <br>";
-        // exit();
+        try {
+            $response = curl_exec($ch);
+            $cInfo = curl_getinfo($ch);
 
-
-        // $reqMulti = 1;
-        // $reqMulti = 10;
-        // // for ($i = 0; $i < $reqMulti; $i++) {
-        // //     $response = curl_exec($ch);
-        // // }
-        // // $cInfo = curl_getinfo($ch);
-
-        // $curl_arr = array();
-        // $masterHandler = curl_multi_init();
-        // for ($i = 0; $i < $reqMulti; $i++) {
-        //     $curl_arr[$i] = curl_init($target_url);
-        //     curl_setopt_array($curl_arr[$i], $curlOptions);
-        //     curl_multi_add_handle($masterHandler, $curl_arr[$i]);
-        // }
-        // while (true) {
-        //     curl_multi_exec($masterHandler, $running);
-        //     if ($running < 1) break;
-        //     curl_multi_select($masterHandler, 1);
-        // }
-        // for ($i = 0; $i < $reqMulti; $i++) {
-        //     $response = curl_multi_getcontent($curl_arr[$i]);
-        // }
-        // // for ($i = 0; $i < $node_count; $i++) {
-        // //     $results[] = curl_multi_getcontent($curl_arr[$i]);
-        // // }
-        // print_r($results);
-        // exit;
-
-
-        if (curl_errno($ch)) {
-            $errmsg = curl_error($ch);
-            throw new \Exception("Error when sending request: $errmsg");
-        } else if ($cInfo['http_code'] != 200) {
-            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-            $header = substr($response, 0, $headerSize);
-            $body = substr($response, $headerSize);
-            echo ("Request failed: $header $body");
-            exit();
-        }
-        curl_close($ch);
-        ob_end_clean();
-        $useLocalTempFolder = self::get($settings, 'useLocalTempFolder', false);
-        $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteLocalTempFile', false);
-        if ($useLocalTempFolder && $autoDeleteLocalTempFile) {
-            $tempFolder = dirname($tempZipPath);
-            $dir = $tempFolder;
-            $di = new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS);
-            $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
-            foreach ($ri as $file) {
-                $file->isDir() ?
-                    rmdir($file->getPathname()) : unlink($file->getPathname());
+            if (curl_errno($ch)) {
+                throw new \Exception("Error when sending request: " . curl_error($ch));
+            } else if ($cInfo['http_code'] != 200) {
+                // Response carries no headers (CURLOPT_HEADER is false), so the
+                // whole response is the body. Throw instead of exit() so the
+                // caller can handle/retry (e.g. back off on 503 + Retry-After)
+                // rather than have its entire PHP process terminated.
+                throw new \Exception(
+                    "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
+                );
+            }
+            return $response;
+        } finally {
+            curl_close($ch);
+            if (!self::$debug) {
+                ob_end_clean();
+            }
+            // Always clean up this request's own temp artifacts, on success or
+            // failure, so the system temp dir does not accumulate over time.
+            $this->cleanupTempArtifacts($tempZipPath);
+            // Back-compat: legacy whole-folder sweep for local-temp mode only.
+            $useLocalTempFolder = self::get($settings, 'useLocalTempFolder', false);
+            $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteLocalTempFile', false);
+            if ($useLocalTempFolder && $autoDeleteLocalTempFile) {
+                $di = new \RecursiveDirectoryIterator(dirname($tempZipPath), \FilesystemIterator::SKIP_DOTS);
+                $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
+                foreach ($ri as $file) {
+                    $file->isDir() ?
+                        rmdir($file->getPathname()) : unlink($file->getPathname());
+                }
             }
         }
-        // file_put_contents('export.jpeg', $response);
-        return $response;
     }
 }

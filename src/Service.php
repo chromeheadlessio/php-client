@@ -2,7 +2,7 @@
 
 namespace chromeheadlessio;
 
-include "Exporter.php";
+include_once __DIR__ . "/Exporter.php";
 
 class Service
 {
@@ -52,11 +52,12 @@ class Service
 
     public function save($filePath = 'export.pdf')
     {
-        if(file_put_contents($filePath, $this->exportContent)) {
+        // file_put_contents returns 0 (falsy) for empty content but still
+        // succeeds; only false means a real write failure.
+        if(file_put_contents($filePath, $this->exportContent) !== false) {
             return $this;
         } else {
             throw new \Exception("Could not save file $filePath");
-            return false;
         }
     }
 
