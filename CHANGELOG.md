@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## Version 1.7.0
 1. Support the string form of `@import` (`@import "x.css"`) in addition to `@import url(...)`, both in inline `<style>`/`style=""` and recursively inside downloaded stylesheets (previously the in-CSS recursion only resolved `url()`).
 
 ## Version 1.6.0
