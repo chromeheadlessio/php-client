@@ -1,5 +1,8 @@
 # Change Log
 
+## Version 1.8.0
+1. Allow the diagnostic flags `logTiming` and `returnTiming` to be set via `settings` (they are forwarded into the export options), in addition to the pdf/image options. An explicit option value still takes precedence.
+
 ## Version 1.7.0
 1. Support the string form of `@import` (`@import "x.css"`) in addition to `@import url(...)`, both in inline `<style>`/`style=""` and recursively inside downloaded stylesheets (previously the in-CSS recursion only resolved `url()`).
 

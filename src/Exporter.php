@@ -521,6 +521,15 @@ class Exporter
             ];
         }
 
+        // logTiming / returnTiming are diagnostic flags the service reads from the
+        // options payload. They are conceptually request settings, so allow them in
+        // settings too (in addition to the pdf options); an explicit pdf option wins.
+        foreach (['logTiming', 'returnTiming'] as $diagFlag) {
+            if (!isset($options[$diagFlag]) && isset($settings[$diagFlag])) {
+                $options[$diagFlag] = $settings[$diagFlag];
+            }
+        }
+
         $file_name_with_full_path = $tempZipPath;
         $postfields = array(
             'exportFormat' => $format, //pdf, png or jpeg
