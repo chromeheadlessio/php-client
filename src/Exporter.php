@@ -6,25 +6,32 @@ class Exporter
 {
     public $settings;
     public $authentication;
+    public $warnings = array();
     static $debug = false;
+    static $resourceTimeout = 10;
+    static $pageTimeout = 60;
 
-    static function url_get_contents($url)
+    static function url_get_contents($url, $timeout = null)
     {
+        if ($timeout === null) {
+            $timeout = self::$resourceTimeout;
+        }
         self::echo("url_get_contents url=$url<br>");
         try {
             if (function_exists('file_get_contents')) {
-                // echo "Call file_get_contents<br>";
-                $url_get_contents_data = file_get_contents($url);
+                $ctx = stream_context_create(array('http' => array('timeout' => $timeout)));
+                $url_get_contents_data = file_get_contents($url, false, $ctx);
             } elseif (function_exists('fopen') && function_exists('stream_get_contents')) {
-                // echo "Call stream_get_contents<br>";
-                $handle = fopen($url, "r");
+                $ctx = stream_context_create(array('http' => array('timeout' => $timeout)));
+                $handle = fopen($url, 'r', false, $ctx);
                 $url_get_contents_data = stream_get_contents($handle);
             } elseif (function_exists('curl_exec')) {
                 $conn = curl_init($url);
-                // echo "Call curl<br>";
                 curl_setopt($conn, CURLOPT_SSL_VERIFYPEER, true);
                 curl_setopt($conn, CURLOPT_FRESH_CONNECT,  true);
                 curl_setopt($conn, CURLOPT_RETURNTRANSFER, 1);
+                curl_setopt($conn, CURLOPT_TIMEOUT, $timeout);
+                curl_setopt($conn, CURLOPT_CONNECTTIMEOUT, min($timeout, 10));
                 $url_get_contents_data = (curl_exec($conn));
                 curl_close($conn);
             } else {
@@ -230,7 +237,11 @@ class Exporter
                         // echo "filename = $filename <br>";
                         // echo "url2 = $url <br><br>";
                         // $fileContent = file_get_contents($url);
-                        $fileContent = $this->url_get_contents($url);
+                        if (array_key_exists($url, $fileList['content'])) {
+                            $fileContent = $fileList['content'][$url];
+                        } else {
+                            $fileContent = $this->url_get_contents($url);
+                        }
                         if ($fileContent) {
                             self::echo("Has file content<br>");
                             $endStr = ".css";
@@ -280,8 +291,10 @@ class Exporter
                             //     $fileList['saved'][$filename] = true;
                         } else if ($fileContent === false) {
                             self::echo("Failed to get file content<br>");
+                            $this->addWarning($url, 'download_failed');
                         } else {
                             self::echo("Empty file content<br>");
+                            $this->addWarning($url, 'empty_content');
                         }
                     }
                     $subMatch = substr($match, 0, $urlOffset);
@@ -319,6 +332,127 @@ class Exporter
             );
         }
         return $content;
+    }
+
+    private function prefetchResources(&$fileList, $content, $resourcePatterns, $scheme, $httpHost, $baseUrl, $concurrency)
+    {
+        // Collect all unique http(s) URLs from every pattern.
+        $seen = array();
+        $queue = array();
+        foreach ($resourcePatterns as $rp) {
+            if (!preg_match_all($rp["regex"], $content, $matches)) {
+                continue;
+            }
+            $urlOrder = 1;
+            while (strpos((string) $rp["urlGroup"], "{group$urlOrder}") === false) {
+                $urlOrder += 1;
+            }
+            foreach ($matches[$urlOrder] as $rawUrl) {
+                $url = self::resolveUrl($rawUrl, $scheme, $httpHost, $baseUrl);
+                if ($url === '' || isset($seen[$url]) || isset($fileList['content'][$url])) {
+                    continue;
+                }
+                if (substr($url, 0, 4) !== 'http') {
+                    continue;
+                }
+                $seen[$url] = true;
+                $queue[$url] = true;
+            }
+        }
+
+        if (empty($queue)) {
+            return;
+        }
+
+        // Download with curl_multi, in chunks of up to $concurrency handles,
+        // so EVERY queued URL (including CSS-discovered ones) gets prefetched
+        // — a truncated first window would silently push the remainder onto
+        // the slow sequential path.
+        $maxDepth = 5;
+        for ($depth = 0; $depth < $maxDepth && !empty($queue); $depth++) {
+            $batchUrls = array_keys($queue);
+            $queue = array();
+
+            foreach (array_chunk($batchUrls, max(1, (int) $concurrency)) as $chunkUrls) {
+                $handles = array();
+                $multi = curl_multi_init();
+
+                $active = 0;
+                foreach ($chunkUrls as $chunkUrl) {
+                    $ch = curl_init($chunkUrl);
+                    curl_setopt_array($ch, array(
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_TIMEOUT => self::$resourceTimeout,
+                        CURLOPT_CONNECTTIMEOUT => min(self::$resourceTimeout, 10),
+                        CURLOPT_FOLLOWLOCATION => true,
+                        CURLOPT_MAXREDIRS => 5,
+                        CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+                        CURLOPT_SSL_VERIFYPEER => true,
+                    ));
+                    curl_multi_add_handle($multi, $ch);
+                    $handles[(int) $ch] = array('ch' => $ch, 'url' => $chunkUrl);
+                }
+
+                // Execute the multi handle.
+                do {
+                    $status = curl_multi_exec($multi, $active);
+                } while ($status === CURLM_CALL_MULTI_PERFORM);
+
+                while ($active && $status === CURLM_OK) {
+                    if (curl_multi_select($multi) === -1) {
+                        // select can transiently fail; avoid a busy spin.
+                        usleep(1000);
+                    }
+                    do {
+                        $status = curl_multi_exec($multi, $active);
+                    } while ($status === CURLM_CALL_MULTI_PERFORM);
+                }
+
+                // Collect results.
+                foreach ($handles as $id => $h) {
+                    $ch = $h['ch'];
+                    $url = $h['url'];
+                    $response = curl_multi_getcontent($ch);
+                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $errno = curl_errno($ch);
+
+                    if ($errno === 0 && $httpCode >= 200 && $httpCode < 300 && $response !== false) {
+                        $fileList['content'][$url] = $response;
+                        // Recurse into CSS for new resource URLs.
+                        $pathForName = $url;
+                        $qPos = strpos($pathForName, '?');
+                        if ($qPos !== false) {
+                            $pathForName = substr($pathForName, 0, $qPos);
+                        }
+                        $basename = basename($pathForName);
+                        if (substr($basename, -4) === '.css' && $response !== '') {
+                            $cssBaseUrl = dirname($url);
+                            foreach (self::cssResourcePatterns() as $cssRP) {
+                                if (preg_match_all($cssRP["regex"], $response, $cssMatches)) {
+                                    $cssUrlOrder = 1;
+                                    while (strpos((string) $cssRP["urlGroup"], "{group$cssUrlOrder}") === false) {
+                                        $cssUrlOrder += 1;
+                                    }
+                                    foreach ($cssMatches[$cssUrlOrder] as $rawCssUrl) {
+                                        $cssUrl = self::resolveUrl($rawCssUrl, $scheme, $httpHost, $cssBaseUrl);
+                                        if ($cssUrl !== '' && !isset($seen[$cssUrl]) && !isset($fileList['content'][$cssUrl]) && substr($cssUrl, 0, 4) === 'http') {
+                                            $seen[$cssUrl] = true;
+                                            $queue[$cssUrl] = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        $fileList['content'][$url] = false;
+                        $this->addWarning($url, 'download_failed');
+                    }
+                    curl_multi_remove_handle($multi, $ch);
+                    curl_close($ch);
+                }
+                curl_multi_close($multi);
+            }
+        }
     }
 
     function saveTempContent($content)
@@ -389,7 +523,12 @@ class Exporter
         );
         $paramRPs = self::get($settings, 'resourcePatterns', []);
         $resourcePatterns = array_merge($resourcePatterns, $paramRPs);
-        $fileList = ['saved' => [], 'hashed' => []];
+        $fileList = ['saved' => [], 'hashed' => [], 'content' => []];
+        $parallel = (bool) self::get($settings, 'parallelDownloads', false);
+        $parallelConcurrency = (int) self::get($settings, 'parallelConcurrency', 8);
+        if ($parallel && function_exists('curl_multi_init')) {
+            $this->prefetchResources($fileList, $content, $resourcePatterns, $scheme, $httpHost, $baseUrl, $parallelConcurrency);
+        }
         foreach ($resourcePatterns as $rp) {
             $content = $this->replaceUrls(
                 $content,
@@ -485,6 +624,21 @@ class Exporter
         }
     }
 
+    function addWarning($url, $reason)
+    {
+        foreach ($this->warnings as $w) {
+            if ($w['url'] === $url && $w['reason'] === $reason) {
+                return;
+            }
+        }
+        $this->warnings[] = array('url' => $url, 'reason' => $reason);
+    }
+
+    public function getWarnings()
+    {
+        return $this->warnings;
+    }
+
     function cloudRequest($format = 'pdf', $options = [])
     {
         self::$debug = self::get($this->settings, 'debug');
@@ -499,10 +653,17 @@ class Exporter
         );
 
         $settings = $this->settings;
+        self::$resourceTimeout = (int) self::get($settings, 'resourceTimeout', 10);
+        self::$pageTimeout = (int) self::get($settings, 'pageTimeout', 60);
+        // Clamp: a negative value would skip the attempt loop entirely and
+        // reach `throw $lastException` with null — a PHP fatal, not an Exception.
+        $retries = max(0, (int) self::get($settings, 'retries', 0));
+        $retryDelayMs = (int) self::get($settings, 'retryDelayMs', 1000);
+        $this->warnings = array();
         $html = self::get($settings, 'html', '');
         if (empty($html)) {
             $url = self::get($settings, 'url', null);
-            $html = file_get_contents($url);
+            $html = self::url_get_contents($url, self::$pageTimeout);
         }
 
         list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
@@ -538,7 +699,6 @@ class Exporter
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             'options' => ! empty($options) ? json_encode($options) : "{}"
         );
-        $ch = curl_init();
         // $CLOUD_EXPORT_SERVICE = "http://localhost:1982";
         // $CLOUD_EXPORT_SERVICE = "http://localhost:8000";
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io";
@@ -568,25 +728,67 @@ class Exporter
             CURLOPT_SSL_VERIFYPEER => $verifySsl,
             // CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
         ); // cURL options
-        curl_setopt_array($ch, $curlOptions);
-        try {
-            $response = curl_exec($ch);
-            $cInfo = curl_getinfo($ch);
 
-            if (curl_errno($ch)) {
-                throw new \Exception("Error when sending request: " . curl_error($ch));
-            } else if ($cInfo['http_code'] != 200) {
-                // Response carries no headers (CURLOPT_HEADER is false), so the
-                // whole response is the body. Throw instead of exit() so the
-                // caller can handle/retry (e.g. back off on 503 + Retry-After)
-                // rather than have its entire PHP process terminated.
-                throw new \Exception(
-                    "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
-                );
+        $responseHeaders = array();
+        $lastException = null;
+
+        try {
+            for ($attempt = 0; $attempt <= $retries; $attempt++) {
+                $ch = curl_init();
+                curl_setopt_array($ch, $curlOptions);
+
+                // Capture response headers without changing body handling.
+                // CURLOPT_HEADER stays false; HEADERFUNCTION writes raw headers to a
+                // local array so we can parse Retry-After on retryable responses.
+                $responseHeaders = array();
+                curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
+                    $responseHeaders[] = $header;
+                    return strlen($header);
+                });
+
+                try {
+                    $response = curl_exec($ch);
+                    $cInfo = curl_getinfo($ch);
+
+                    if (curl_errno($ch)) {
+                        $curlErrno = curl_errno($ch);
+                        $curlError = curl_error($ch);
+
+                        if ($retries === 0 || $attempt >= $retries || !in_array($curlErrno, array(6, 7, 28, 35, 52, 56))) {
+                            throw new \Exception("Error when sending request: " . $curlError);
+                        }
+                        $lastException = new \Exception("Error when sending request: " . $curlError);
+                    } else if ($cInfo['http_code'] != 200) {
+                        if ($retries === 0 || $attempt >= $retries || !in_array($cInfo['http_code'], array(502, 503, 504))) {
+                            throw new \Exception(
+                                "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
+                            );
+                        }
+                        $lastException = new \Exception(
+                            "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
+                        );
+                    } else {
+                        return $response;
+                    }
+                } finally {
+                    curl_close($ch);
+                }
+
+                // Backoff before next retry: exponential with Retry-After override.
+                $delayMs = $retryDelayMs * pow(2, $attempt);
+                foreach ($responseHeaders as $headerLine) {
+                    if (preg_match('/^retry-after:\s*(\d+)/i', $headerLine, $m)) {
+                        $delayMs = max($delayMs, (int)$m[1] * 1000);
+                        break;
+                    }
+                }
+                $delayMs = min($delayMs, 30000);
+                usleep($delayMs * 1000);
             }
-            return $response;
+
+            // All attempts exhausted — throw the last captured error.
+            throw $lastException;
         } finally {
-            curl_close($ch);
             if (!self::$debug) {
                 ob_end_clean();
             }

@@ -50,6 +50,11 @@ class Service
         return $this;
     }
 
+    public function getWarnings()
+    {
+        return $this->Exporter->getWarnings();
+    }
+
     public function save($filePath = 'export.pdf')
     {
         // file_put_contents returns 0 (falsy) for empty content but still

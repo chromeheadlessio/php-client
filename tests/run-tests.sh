@@ -9,6 +9,10 @@ echo "== resolveUrl unit test =="
 php tests/resolveUrl_test.php
 
 echo
+echo "== retry test =="
+php tests/retry_test.php
+
+echo
 echo "== collision integration test =="
 PORT="${PORT:-8771}"
 php -S "127.0.0.1:${PORT}" -t tests/fixtures >/dev/null 2>&1 &
@@ -26,6 +30,18 @@ php tests/collision_test.php "http://127.0.0.1:${PORT}"
 echo
 echo "== @import integration test =="
 php tests/import_test.php "http://127.0.0.1:${PORT}"
+
+echo
+echo "== timeout test =="
+php tests/timeout_test.php "http://127.0.0.1:${PORT}"
+
+echo
+echo "== warnings test =="
+php tests/warnings_test.php "http://127.0.0.1:${PORT}"
+
+echo
+echo "== parallel downloads test =="
+php tests/parallel_test.php "http://127.0.0.1:${PORT}"
 
 echo
 echo "ALL TESTS PASSED"
