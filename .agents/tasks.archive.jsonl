@@ -1,0 +1,83 @@
+{
+  "id": "task-001",
+  "title": "Bounded timeouts on all resource/page fetches",
+  "status": "reviewed",
+  "claimed_by": "builder-1",
+  "artifacts": [
+    "src/Exporter.php",
+    "tests/timeout_test.php",
+    "tests/run-tests.sh"
+  ],
+  "deps": [],
+  "owner": "builder",
+  "created_at": "2026-07-07T00:00:00Z",
+  "updated_at": "2026-07-07T14:03:00Z",
+  "completed_at": "2026-07-07T14:03:00Z",
+  "spec": "PROBLEM: In src/Exporter.php, url_get_contents() uses bare file_get_contents($url) / fopen() with NO timeout. One dead or slow resource URL (image/CSS/JS referenced by the report HTML) stalls the whole export for PHP's default socket timeout (60s+), per resource, before the request ever reaches the export service. Same for the main page fetch in cloudRequest() (`$html = file_get_contents($url);` around line 505).\n\nCHANGE (all in src/Exporter.php):\n1. Add two static properties with these exact defaults: `static $resourceTimeout = 10;` (seconds, per-resource fetch) and `static $pageTimeout = 60;` (seconds, main page fetch — 60 matches PHP's default socket timeout so existing behavior does not regress for slow report pages).\n2. In cloudRequest(), right after `$settings = $this->settings;` is available, read overrides: `self::$resourceTimeout = (int) self::get($settings, 'resourceTimeout', 10);` and `self::$pageTimeout = (int) self::get($settings, 'pageTimeout', 60);`.\n3. Change url_get_contents($url) to url_get_contents($url, $timeout = null); when $timeout is null use self::$resourceTimeout. Apply the timeout on every branch:\n   - file_get_contents branch: `$ctx = stream_context_create(array('http' => array('timeout' => $timeout)));` then `file_get_contents($url, false, $ctx)`. (The 'http' context options apply to both http:// and https:// URLs.)\n   - fopen branch: `fopen($url, 'r', false, $ctx)` with the same context.\n   - curl branch: add `CURLOPT_TIMEOUT => $timeout` and `CURLOPT_CONNECTTIMEOUT => min($timeout, 10)`.\n4. In cloudRequest(), replace the bare `$html = file_get_contents($url);` with `$html = self::url_get_contents($url, self::$pageTimeout);`. Note url_get_contents returns \"\" on exception and false on total failure; saveTempContent() already throws 'Empty export content' for empty html — that error path is acceptable and unchanged.\n\nDO NOT change: the wire format, any other default, the recursive replaceUrls flow.\n\nTESTS: Create tests/timeout_test.php following the style of tests/resolveUrl_test.php (check($cond,$msg) helper, exit 1 on fail, no network dependency on the outside world). Test: call \\chromeheadlessio\\Exporter::url_get_contents('http://10.255.255.1/x.css', 2) (non-routable TEST-NET-ish address), measure elapsed time with microtime(true), assert result is falsy AND elapsed < 8 seconds (generous bound; without the fix it would hang 60s+). Also assert a fetch of a real local fixture still works: start no server yourself — instead wire the test into tests/run-tests.sh AFTER the fixture server is up and pass the base URL as argv[1], then assert url_get_contents($base . '/page.html', 5) returns a string containing 'logo.png'.\n\nDONE WHEN: php -l passes on src/Exporter.php; `bash tests/run-tests.sh` passes from a clean state including the new timeout test; real output pasted into progress.md.",
+  "reviewed_at": "2026-07-07T15:10:00Z",
+  "review_notes": "Accepted. Diff matches spec exactly; architect re-ran full suite from clean state: ALL TESTS PASSED (timeout enforced at 2s on non-routable addr). Pre-existing PHP warning on failed fetch noted, not a regression."
+}
+{
+  "id": "task-002",
+  "title": "Opt-in retry with exponential backoff + Retry-After for the service request",
+  "status": "reviewed",
+  "claimed_by": "builder-1",
+  "artifacts": [
+    "src/Exporter.php",
+    "tests/retry_test.php",
+    "tests/run-tests.sh"
+  ],
+  "deps": [
+    "task-001"
+  ],
+  "owner": "builder",
+  "created_at": "2026-07-07T00:00:00Z",
+  "updated_at": "2026-07-07T00:00:00Z",
+  "completed_at": "2026-07-07T14:08:00Z",
+  "spec": "PROBLEM: In src/Exporter.php cloudRequest(), a transient failure (connect error, timeout, or HTTP 502/503/504 from the export service) throws immediately. The comment above the http_code check even says callers should be able to 'back off on 503 + Retry-After', but nothing implements it. KoolReport customers see hard failures during brief load spikes.\n\nCHANGE (src/Exporter.php, cloudRequest() only):\n1. New settings, read once: `$retries = (int) self::get($settings, 'retries', 0);` and `$retryDelayMs = (int) self::get($settings, 'retryDelayMs', 1000);`. DEFAULT retries=0 MUST mean exactly one attempt and byte-for-byte current behavior.\n2. Wrap the curl execution in an attempt loop (attempt 0..$retries). Create a FRESH curl handle inside the loop each attempt (curl_init + curl_setopt_array + curl_close per attempt); the $postfields array with curl_file_create(...) can be built once outside and reused. The temp zip must NOT be cleaned up between attempts — cleanup stays exactly where it is, in the finally block.\n3. Capture response headers without changing body handling (CURLOPT_HEADER must stay false): add `CURLOPT_HEADERFUNCTION` writing raw header lines into an array; after each attempt parse a numeric `Retry-After: N` (seconds) case-insensitively if present.\n4. Retryable conditions ONLY: (a) curl_errno($ch) is one of 6 (couldn't resolve), 7 (couldn't connect), 28 (timeout), 35 (SSL connect), 52 (empty reply), 56 (recv failure); OR (b) http_code is 502, 503, or 504. Anything else (including every other 4xx/5xx) throws immediately exactly as today, with the SAME exception messages as the current code.\n5. Backoff before each retry: `$delayMs = $retryDelayMs * pow(2, $attempt);` if a numeric Retry-After was captured, `$delayMs = max($delayMs, $retryAfterSeconds * 1000);` cap at 30000; then `usleep($delayMs * 1000);`.\n6. If all attempts are exhausted, throw the LAST error with the same message format as today (so existing customer catch blocks keep working).\n\nDO NOT change: wire format, default CURLOPT_TIMEOUT (140), verifySsl handling, the finally-block cleanup, ob_start/ob_end_clean behavior.\n\nTESTS: Create tests/retry_test.php (no fixture server needed; wire into tests/run-tests.sh). Point serviceHost at 'http://127.0.0.1:1' (connection refused ⇒ curl errno 7). Case A: settings retries=0 ⇒ assert it throws and elapsed < 5s. Case B: settings retries=2, retryDelayMs=200 ⇒ assert it throws AND elapsed >= 0.6s (200ms + 400ms backoff proves 3 attempts ran with backoff) AND elapsed < 20s. Build the Exporter directly, set ->settings = array('serviceHost'=>'http://127.0.0.1:1', 'html'=>'<html><body>x</body></html>', 'retries'=>..., 'retryDelayMs'=>..., 'debug'=>false), call cloudRequest('pdf', array()). NOTE: settings must include 'html' so no page fetch happens; the resource scan finds no URLs in that html so no fixture server is needed. $_SERVER['HTTP_HOST'], $_SERVER['REQUEST_URI'] must be stubbed like tests/collision_test.php does.\n\nDONE WHEN: php -l passes; `bash tests/run-tests.sh` passes from a clean state including both new cases; real output pasted into progress.md.",
+  "reviewed_at": "2026-07-07T16:40:00Z",
+  "review_notes": "Accepted with one architect fix: clamped retries to max(0,...) — a negative value skipped the attempt loop and reached `throw $lastException` with null (PHP fatal, not Exception). Loop/backoff/Retry-After logic verified correct; exception messages unchanged; retries=0 is byte-for-byte prior behavior."
+}
+{
+  "id": "task-003",
+  "title": "Resource-failure warnings API (getWarnings) on Exporter and Service",
+  "status": "reviewed",
+  "claimed_by": "builder-1",
+  "artifacts": [
+    "src/Exporter.php",
+    "src/Service.php",
+    "tests/warnings_test.php",
+    "tests/run-tests.sh"
+  ],
+  "deps": [
+    "task-002"
+  ],
+  "owner": "builder",
+  "created_at": "2026-07-07T00:00:00Z",
+  "updated_at": "2026-07-07T00:00:00Z",
+  "completed_at": "2026-07-07T14:12:00Z",
+  "spec": "PROBLEM: When a resource download fails during export preparation (replaceUrls in src/Exporter.php), the failure is silent unless debug mode is on — the original URL is left in the HTML and the customer gets a PDF with missing styling/images and no way to find out why programmatically.\n\nCHANGE:\n1. src/Exporter.php: add instance property `public $warnings = array();`. Reset it to array() at the START of cloudRequest(). ALSO reset it at the start of saveTempContent() ONLY IF empty($this->warnings) is not desired — no: to keep it simple, reset ONLY in cloudRequest(); saveTempContent() called directly (as tests do) just accumulates.\n2. In the replaceUrls() preg_replace_callback, in the existing failure branches: where the code currently does self::echo(\"Failed to get file content<br>\") append `$this->warnings[] = array('url' => $url, 'reason' => 'download_failed');` and where it does self::echo(\"Empty file content<br>\") append `$this->warnings[] = array('url' => $url, 'reason' => 'empty_content');`. Note the callback is a closure inside an instance method so $this is available; you may need to check the closure's `use` clause — $this is automatically bound in PHP 5.4+, do NOT add it to `use`.\n3. Deduplicate: before appending, skip if an entry with the same url+reason already exists (a URL can be matched by multiple patterns).\n4. Add `public function getWarnings() { return $this->warnings; }` to Exporter.\n5. src/Service.php: add `public function getWarnings() { return $this->Exporter->getWarnings(); }` (note the property is $this->Exporter, capital E). This lets customers do: $svc->export($settings)->pdf($opts)->save($f); $warnings = $svc->getWarnings();\n\nDO NOT change: any existing behavior, output, or exception; warnings are purely additive observation. No new settings.\n\nTESTS: Create tests/warnings_test.php modeled on tests/collision_test.php (uses the php -S fixture server; wire into tests/run-tests.sh passing the base URL). Build HTML that references (a) one real fixture, e.g. <img src=\"a/logo.png\"> and (b) one dead same-host path, e.g. <img src=\"a/definitely-missing-9f7.png\"> (the php -S server 404s ⇒ file_get_contents returns false ⇒ download_failed). Call saveTempContent($html) directly with settings baseUrl = fixture base. Assert: getWarnings() contains exactly one entry whose url ends with 'definitely-missing-9f7.png' with reason 'download_failed'; assert no warning entry for a/logo.png; cleanupTempArtifacts at the end like collision_test does. ALSO assert calling cloudRequest resets warnings: not practical without a live service — instead directly test the reset line by setting $ex->warnings = array('sentinel') then... skip this; the reset is covered by code review. Keep the test to the saveTempContent path.\n\nDONE WHEN: php -l passes on both changed files; `bash tests/run-tests.sh` passes from a clean state including the new warnings test; real output pasted into progress.md.",
+  "reviewed_at": "2026-07-07T16:40:00Z",
+  "review_notes": "Accepted as-is. addWarning dedup + reset-in-cloudRequest verified; Service delegation correct; purely additive."
+}
+{
+  "id": "task-004",
+  "title": "Opt-in parallel resource downloads via curl_multi (settings.parallelDownloads)",
+  "status": "reviewed",
+  "claimed_by": "builder-1",
+  "artifacts": [
+    "src/Exporter.php",
+    "tests/parallel_test.php",
+    "tests/run-tests.sh"
+  ],
+  "deps": [
+    "task-003"
+  ],
+  "owner": "builder",
+  "created_at": "2026-07-07T00:00:00Z",
+  "updated_at": "2026-07-07T00:00:00Z",
+  "completed_at": "2026-07-07T14:18:00Z",
+  "spec": "PROBLEM: replaceUrls() in src/Exporter.php downloads every referenced resource sequentially inside a regex callback. A report with 15 CSS/JS/images pays 15 serial round-trips before upload — often more wall-clock than the export service's ~2s render itself.\n\nDESIGN (pre-fetch cache; the existing sequential flow stays the single source of truth for rewriting):\n1. New settings read in cloudRequest() AND honored when saveTempContent() is called directly: `$parallel = (bool) self::get($this->settings, 'parallelDownloads', false);` (DEFAULT false = zero behavior change) and `$parallelConcurrency = (int) self::get($this->settings, 'parallelConcurrency', 8);`.\n2. Extend the existing $fileList array with a third bucket: `$fileList = ['saved' => [], 'hashed' => [], 'content' => []];` (in saveTempContent).\n3. New private method `prefetchResources(&$fileList, $content, $resourcePatterns, $scheme, $httpHost, $baseUrl, $concurrency)`:\n   a. COLLECT: run preg_match_all for every pattern in $resourcePatterns against $content; for each raw URL found, resolve with self::resolveUrl(...); skip if empty, if already in $fileList['content'], or if it does not start with 'http' (only http/https are prefetched — anything else falls through to the sequential path untouched).\n   b. DOWNLOAD the batch with curl_multi: create up to $concurrency easy handles at a time (CURLOPT_RETURNTRANSFER true, CURLOPT_TIMEOUT self::$resourceTimeout, CURLOPT_CONNECTTIMEOUT min(self::$resourceTimeout,10), CURLOPT_FOLLOWLOCATION true, CURLOPT_MAXREDIRS 5, CURLOPT_PROTOCOLS CURLPROTO_HTTP|CURLPROTO_HTTPS); as handles finish, store `$fileList['content'][$url] = $body` on 2xx, or `false` on failure (also append to $this->warnings with reason 'download_failed', dedup like task-003).\n   c. RECURSE INTO CSS: for every downloaded url whose basename (query stripped) ends with .css and whose body is a non-empty string, scan that body with self::cssResourcePatterns() resolved against dirname($url) and collect new URLs; loop back to (b) until no new URLs are found or 5 iterations (depth cap).\n4. In saveTempContent(): after $resourcePatterns and $fileList are built and BEFORE the foreach over patterns, call prefetchResources(...) iff $parallel is true AND function_exists('curl_multi_init'). If curl_multi is unavailable, silently skip (sequential fallback).\n5. In the replaceUrls() callback, change the single fetch line `$fileContent = $this->url_get_contents($url);` to consult the cache first: `if (array_key_exists($url, $fileList['content'])) { $fileContent = $fileList['content'][$url]; } else { $fileContent = $this->url_get_contents($url); }`. NOTE array_key_exists (not isset) so a cached `false` (known failure) is honored and NOT retried sequentially. $fileList is already passed by reference throughout — verify the closure's `use (&$fileList, ...)` already captures it by reference (it does today).\n6. The rewrite/hash/save flow (md5 names, fileList['saved'], recursive CSS rewrite inside replaceUrls) stays EXACTLY as-is — with a warm cache it just stops doing network I/O.\n\nCORRECTNESS REQUIREMENT: with parallelDownloads=true the produced temp dir (file names + file contents + rewritten export.html) must be IDENTICAL to sequential mode for the same input.\n\nTESTS: Create tests/parallel_test.php using the php -S fixture server (wire into tests/run-tests.sh with the base URL). Reuse the collision fixture page (page.html) — run saveTempContent on the same fetched html TWICE: once with settings parallelDownloads=false, once with true. Assert both runs produce the same sorted list of non-export.html filenames in their temp dirs AND identical file contents per name AND identical export.html bodies. Then assert the import fixture (import.html, which pulls CSS with @import chains) also produces identical results in both modes — this exercises the CSS recursion. Clean up both temp artifacts. Also add one dead-URL case asserting a warning is recorded in parallel mode.\n\nDONE WHEN: php -l passes; `bash tests/run-tests.sh` passes from a clean state including the new parallel test; real output pasted into progress.md.",
+  "reviewed_at": "2026-07-07T16:40:00Z",
+  "review_notes": "Accepted with architect fixes: (1) batch was truncated to the first $concurrency URLs per depth — rest silently fell to the sequential path, defeating the feature for pages with >8 resources; restructured with array_chunk so every URL is prefetched, $concurrency at a time. (2) curl_multi_select===-1 busy-spin now usleeps and still re-execs (old code could loop forever without exec). (3) removed dead $parsedUrl. Added chunking regression case (concurrency=2 vs 5-resource @import chain) to parallel_test.php. Byte-identical output vs sequential verified."
+}
