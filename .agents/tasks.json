@@ -1,4 +1,27 @@
 {
   "frozen": false,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "task-038",
+      "title": "T2 resource cache client (1.10.0): bundle hash-set, hash-and-omit, 409 handling, three-tier belief + persistent store + sync, hard fallback",
+      "status": "reviewed",
+      "owner": "architect",
+      "claimed_by": "architect (Opus 4.8, direct build — production wire contract; Antigravity out, DeepSeek Flash too weak)",
+      "reviewed_at": "2026-07-09T18:30:00Z",
+      "mirrors": "pdf-export-service .agents/tasks.json task-038 (T2 spine)",
+      "artifacts": [
+        "src/ResourceCache.php",
+        "src/Exporter.php",
+        "data/koolreport-hashset.json",
+        "tests/service-mock.php",
+        "tests/fixtures/rc/",
+        "tests/resourceCache_unit_test.php",
+        "tests/resourceCache_service_test.php",
+        "tests/run-tests.sh",
+        "CHANGELOG.md",
+        "composer.json"
+      ],
+      "review_notes": "ARCHITECT-BUILT + SELF-VERIFIED. New ResourceCache class (belief set BUNDLED u SYNCED u SELF; atomic per-(endpoint,token) store in cacheDir, graceful no-writable-dir degradation; cached capability probe; gated failure-safe delta sync). Exporter wiring: saveTempContent hashes ACTUAL bytes and omits believed-cached assets into a resourceManifest (fidelity-safe); cloudRequest detects capability, attaches manifest, handles 409 {missing} with a single re-send that adds the missing bytes back, merges X-Resource-Cached into SELF, and HARD-FALLS-BACK to a full-zip export on any cache-path error. OPT-IN, default OFF; wire byte-identical when off/unsupported. VERIFIED from clean: full tests/run-tests.sh EXIT 0, 107 assertions, 9/9 files incl. new unit (22) + service (22 via mock) — no regression to the 7 existing suites. RESIDUAL: architect was builder+reviewer (no independent 2nd model). NOTE: composer bumped 1.8.0 -> 1.10.0; the 1.9.0 resilience release (CHANGELOG/tag) is still pending user gate — version gap flagged. data/koolreport-hashset.json ships EMPTY (release step copies the server task-037 dist/koolreport-hashset.json in)."
+    }
+  ]
 }
