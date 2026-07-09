@@ -1,5 +1,47 @@
 # Change Log
 
+## Version 1.10.0
+1. **Resource cache (opt-in, additive).** When enabled and the target export
+   service advertises support, the client omits assets it believes are already
+   cached server-side from the upload zip and lists them in a `resourceManifest`
+   instead — so KoolReport library resources no longer have to be zipped into
+   every request. Enable with a `resourceCache` settings block; it is **OFF by
+   default** and, when off or unsupported, the wire is byte-identical to before.
+   ```php
+   'resourceCache' => [
+       'enabled'   => true,          // opt in (default false)
+       'cacheDir'  => sys_get_temp_dir(), // writable; NEVER the package dir
+       // optional: 'sync' => true, 'syncInterval' => 86400, 'capabilityTtl' => 300,
+   ]
+   ```
+2. Fidelity-safe by construction: membership is tested against the sha256 of the
+   **actual local bytes**, so a locally patched asset simply misses the set and
+   is uploaded normally — a cache hit can never swap in the wrong bytes.
+3. Belief set = BUNDLED (the shipped `data/koolreport-hashset.json`) ∪ SYNCED
+   (global shareable hashes pulled from `GET /api/cache/manifest`, off the hot
+   path) ∪ SELF (this install's own server-confirmed uploads). SYNCED+SELF are
+   persisted atomically in `cacheDir`, keyed by (endpoint, token).
+4. Resilient: on a `409 { missing }` the client re-sends once with just the
+   missing assets added back; on ANY cache-path problem it falls back to a plain
+   full-zip export. A resource-cache issue never breaks or blocks an export.
+
+This release also folds in the **resilience + speed batch** (previously staged
+as 1.9.0, not separately released):
+
+5. Bounded timeouts on every resource/page fetch (`resourceTimeout` = 10s,
+   `pageTimeout` = 60s) — a dead resource URL no longer stalls the export.
+6. Opt-in retry with exponential backoff honoring `Retry-After` (`retries` = 0
+   by default = exact prior behavior; only curl errno 6/7/28/35/52/56 or HTTP
+   502/503/504 are retried).
+7. `getWarnings()` on `Exporter`/`Service`: failed resource downloads are now
+   inspectable (url + reason) instead of silent.
+8. Opt-in parallel resource downloads via `curl_multi` (`parallelDownloads` =
+   false by default, `parallelConcurrency` = 8), chunked so every URL is
+   prefetched; byte-identical output vs sequential mode, enforced by tests.
+
+No wire-format change from any of the above: endpoint, multipart fields,
+defaults and auth header are untouched.
+
 ## Version 1.8.0
 1. Allow the diagnostic flags `logTiming` and `returnTiming` to be set via `settings` (they are forwarded into the export options), in addition to the pdf/image options. An explicit option value still takes precedence.
 

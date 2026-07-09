@@ -44,4 +44,24 @@ echo "== parallel downloads test =="
 php tests/parallel_test.php "http://127.0.0.1:${PORT}"
 
 echo
+echo "== resource cache unit test =="
+php tests/resourceCache_unit_test.php "http://127.0.0.1:${PORT}"
+
+echo
+echo "== resource cache service test =="
+SVC_PORT="${SVC_PORT:-8772}"
+MOCK_CONTROL="$(mktemp -t rc-mock-control.XXXXXX)"
+MOCK_LAST="$(mktemp -t rc-mock-last.XXXXXX)"
+export MOCK_CONTROL MOCK_LAST
+MOCK_CONTROL="$MOCK_CONTROL" MOCK_LAST="$MOCK_LAST" \
+    php -S "127.0.0.1:${SVC_PORT}" tests/service-mock.php >/dev/null 2>&1 &
+MOCK_SRV=$!
+trap 'kill "$SRV" "$MOCK_SRV" 2>/dev/null || true; rm -f "$MOCK_CONTROL" "$MOCK_LAST"' EXIT
+for _ in $(seq 1 40); do
+    if curl -sf "http://127.0.0.1:${SVC_PORT}/api/capabilities" >/dev/null 2>&1; then break; fi
+    sleep 0.2
+done
+php tests/resourceCache_service_test.php "http://127.0.0.1:${PORT}" "http://127.0.0.1:${SVC_PORT}"
+
+echo
 echo "ALL TESTS PASSED"

@@ -1,0 +1,5 @@
+{
+  "_note": "Bundled KoolReport asset hash-set (sha256 of asset bytes) shipped with the client. Populated at release time by copying dist/koolreport-hashset.json produced by the export service's pre-seed pipeline (server task-037). An empty set is valid: the client simply omits nothing from BUNDLED and warms up via 409 + delta-sync instead.",
+  "algo": "sha256",
+  "hashes": []
+}

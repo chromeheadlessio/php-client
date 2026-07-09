@@ -2,6 +2,8 @@
 
 namespace chromeheadlessio;
 
+include_once __DIR__ . "/ResourceCache.php";
+
 class Exporter
 {
     public $settings;
@@ -173,6 +175,70 @@ class Exporter
 
         // Zip archive will be created only after closing object
         $zip->close();
+    }
+
+    // Zip a folder like zipWholeFolder, but SKIP any file whose zip-relative
+    // path is a key in $omit. Used by the resource cache to omit server-cached
+    // assets from the upload (and, on a 409 miss, to add just the missing ones
+    // back). The omitted files stay on disk so a miss/fallback can re-zip them.
+    function zipFolderExcept($path, $zipName, $omit = array())
+    {
+        $realPath = realpath($path);
+        $zip = new \ZipArchive();
+        $zip->open($zipName, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+        $files = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($realPath),
+            \RecursiveIteratorIterator::LEAVES_ONLY
+        );
+        foreach ($files as $name => $file) {
+            if (!$file->isDir()) {
+                $filePath = $file->getRealPath();
+                $relativePath = substr((string) $filePath, strlen((string) $realPath) + 1);
+                if (isset($omit[$relativePath])) {
+                    continue;
+                }
+                $zip->addFile($filePath, $relativePath);
+            }
+        }
+        $zip->close();
+    }
+
+    // Build the resource-cache manifest for a prepared temp folder: for every
+    // stored resource file (everything except export.html), hash its ACTUAL
+    // bytes and, if that hash is in the client's belief set, record a manifest
+    // entry { path, hash } and mark the file for omission from the upload zip.
+    // Fidelity-safe: a locally modified asset hashes to something NOT in the set
+    // and is therefore uploaded normally — a hit can never swap in wrong bytes.
+    private function buildResourceManifest($tempPath, $rc, &$manifest, &$manifestMap, &$omit)
+    {
+        $realPath = realpath($tempPath);
+        if ($realPath === false) {
+            return;
+        }
+        $files = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($realPath),
+            \RecursiveIteratorIterator::LEAVES_ONLY
+        );
+        foreach ($files as $name => $file) {
+            if ($file->isDir()) {
+                continue;
+            }
+            $filePath = $file->getRealPath();
+            $rel = substr((string) $filePath, strlen((string) $realPath) + 1);
+            if ($rel === '' || $rel === 'export.html') {
+                continue;
+            }
+            $bytes = @file_get_contents($filePath);
+            if ($bytes === false) {
+                continue;
+            }
+            $h = hash('sha256', $bytes);
+            if ($rc->beliefHas($h)) {
+                $manifest[] = array('path' => $rel, 'hash' => $h);
+                $manifestMap[$h] = $rel;
+                $omit[$rel] = true;
+            }
+        }
     }
 
     function replaceUrls(
@@ -455,7 +521,7 @@ class Exporter
         }
     }
 
-    function saveTempContent($content)
+    function saveTempContent($content, $rc = null)
     {
         $settings = $this->settings;
         $tmpFolder = $this->getTempFolder();
@@ -554,8 +620,23 @@ class Exporter
             return false;
         }
         if (file_put_contents($exportHtmlPath, $content) !== false) {
-            $this->zipWholeFolder($tempPath, $tempZipPath);
-            return [$exportHtmlPath, $tempZipPath, $tempZipName];
+            // Resource cache (opt-in): when a ResourceCache is passed, omit any
+            // stored asset whose bytes are already believed server-cached and
+            // record it in the manifest instead. Otherwise behave exactly as
+            // before — zip the whole folder, empty manifest.
+            $manifest = array();
+            $manifestMap = array();
+            $omit = array();
+            if ($rc !== null) {
+                $this->buildResourceManifest($tempPath, $rc, $manifest, $manifestMap, $omit);
+            }
+            if (!empty($omit)) {
+                $this->zipFolderExcept($tempPath, $tempZipPath, $omit);
+            } else {
+                $this->zipWholeFolder($tempPath, $tempZipPath);
+            }
+            // Extra return values are ignored by existing `list($a,$b,$c)=` callers.
+            return array($exportHtmlPath, $tempZipPath, $tempZipName, $manifest, $tempPath, $manifestMap);
         } else {
             throw new \Exception("Could not save content to temporary folder");
             return false;
@@ -639,6 +720,166 @@ class Exporter
         return $this->warnings;
     }
 
+    // One HTTP POST. Returns array(errno,error,code,body,headers). Headers are
+    // captured via HEADERFUNCTION so Retry-After / X-Resource-Cached are readable
+    // while the body stays clean (CURLOPT_HEADER off), matching prior behavior.
+    private function httpSendOnce($curlOptions)
+    {
+        $ch = curl_init();
+        curl_setopt_array($ch, $curlOptions);
+        $responseHeaders = array();
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
+            $responseHeaders[] = $header;
+            return strlen($header);
+        });
+        $body = curl_exec($ch);
+        $info = curl_getinfo($ch);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+        return array(
+            'errno'   => $errno,
+            'error'   => $error,
+            'code'    => isset($info['http_code']) ? (int) $info['http_code'] : 0,
+            'body'    => $body,
+            'headers' => $responseHeaders,
+        );
+    }
+
+    // Exponential backoff (Retry-After honored) before the next transient retry.
+    // $nextAttempt is 1-based, so 2^($nextAttempt-1) reproduces the prior schedule.
+    private function backoff($nextAttempt, $retryDelayMs, $headers)
+    {
+        $delayMs = $retryDelayMs * pow(2, $nextAttempt - 1);
+        foreach ($headers as $headerLine) {
+            if (preg_match('/^retry-after:\s*(\d+)/i', $headerLine, $m)) {
+                $delayMs = max($delayMs, (int) $m[1] * 1000);
+                break;
+            }
+        }
+        $delayMs = min($delayMs, 30000);
+        usleep($delayMs * 1000);
+    }
+
+    // Parse a 409 body into its missing-hash list, or null if it is not a
+    // well-formed { missing:[...] } response (which triggers a hard fallback).
+    private function parseMissingHashes($body)
+    {
+        if (!is_string($body) || $body === '') {
+            return null;
+        }
+        $data = json_decode($body, true);
+        if (!is_array($data) || !isset($data['missing']) || !is_array($data['missing'])) {
+            return null;
+        }
+        $out = array();
+        foreach ($data['missing'] as $h) {
+            if (is_string($h) && $h !== '') {
+                $out[] = $h;
+            }
+        }
+        return $out;
+    }
+
+    // Extract the server's X-Resource-Cached confirmation hashes (comma list).
+    private function parseResourceCachedHeader($headers)
+    {
+        $out = array();
+        foreach ($headers as $headerLine) {
+            if (preg_match('/^x-resource-cached:\s*(.+?)\s*$/i', $headerLine, $m)) {
+                foreach (explode(',', $m[1]) as $h) {
+                    $h = trim($h);
+                    if ($h !== '') {
+                        $out[] = $h;
+                    }
+                }
+            }
+        }
+        return $out;
+    }
+
+    // Send the export with transient-retry backoff (as before) PLUS, when the
+    // cache is active: a single 409 { missing } re-send (adding just the missing
+    // assets back into the zip) and merging the server's confirmation into SELF.
+    // On the cache path, an unrecoverable outcome throws ResourceCacheFallback so
+    // the caller can retry as a plain full-zip export.
+    private function runSendLoop($curlOptions, $postfields, $ctx)
+    {
+        $cacheActive  = !empty($ctx['cacheActive']);
+        $retries      = (int) $ctx['retries'];
+        $retryDelayMs = (int) $ctx['retryDelayMs'];
+
+        $baseOmit = array();
+        foreach ($ctx['manifestMap'] as $hash => $rel) {
+            $baseOmit[$rel] = true;
+        }
+
+        $curlOptions[CURLOPT_POSTFIELDS] = $postfields;
+        $missRetried = false;
+        $attempt = 0;
+
+        while (true) {
+            $r = $this->httpSendOnce($curlOptions);
+
+            if ($r['errno'] !== 0) {
+                if ($retries > 0 && $attempt < $retries && in_array($r['errno'], array(6, 7, 28, 35, 52, 56))) {
+                    $attempt++;
+                    $this->backoff($attempt, $retryDelayMs, $r['headers']);
+                    continue;
+                }
+                if ($cacheActive) {
+                    throw new ResourceCacheFallback("send error: " . $r['error']);
+                }
+                throw new \Exception("Error when sending request: " . $r['error']);
+            }
+
+            $code = $r['code'];
+
+            if ($code === 200) {
+                if ($cacheActive && $ctx['rc'] !== null) {
+                    $confirmed = $this->parseResourceCachedHeader($r['headers']);
+                    // Only ever grow SELF with hashes we actually sent and the
+                    // server confirmed — never trust arbitrary server data.
+                    $confirmed = array_values(array_intersect($confirmed, array_keys($ctx['manifestMap'])));
+                    if (!empty($confirmed)) {
+                        $ctx['rc']->noteConfirmed($confirmed);
+                    }
+                }
+                return $r['body'];
+            }
+
+            if ($code === 409 && $cacheActive && !$missRetried) {
+                $missing = $this->parseMissingHashes($r['body']);
+                if ($missing === null) {
+                    throw new ResourceCacheFallback("malformed 409 response");
+                }
+                $reOmit = $baseOmit;
+                foreach ($missing as $mh) {
+                    if (isset($ctx['manifestMap'][$mh])) {
+                        unset($reOmit[$ctx['manifestMap'][$mh]]);
+                    }
+                }
+                $this->zipFolderExcept($ctx['tempPath'], $ctx['tempZipPath'], $reOmit);
+                $postfields['fileToExport'] = curl_file_create($ctx['tempZipPath'], 'application/zip', $ctx['tempZipName']);
+                $curlOptions[CURLOPT_POSTFIELDS] = $postfields;
+                $curlOptions[CURLOPT_INFILESIZE] = filesize($ctx['tempZipPath']);
+                $missRetried = true;
+                continue; // resend does not consume a transient-retry attempt
+            }
+
+            if (in_array($code, array(502, 503, 504)) && $retries > 0 && $attempt < $retries) {
+                $attempt++;
+                $this->backoff($attempt, $retryDelayMs, $r['headers']);
+                continue;
+            }
+
+            if ($cacheActive) {
+                throw new ResourceCacheFallback("http " . $code);
+            }
+            throw new \Exception("Export request failed with HTTP " . $code . ": " . $r['body']);
+        }
+    }
+
     function cloudRequest($format = 'pdf', $options = [])
     {
         self::$debug = self::get($this->settings, 'debug');
@@ -666,11 +907,36 @@ class Exporter
             $html = self::url_get_contents($url, self::$pageTimeout);
         }
 
-        list($exportHtmlPath, $tempZipPath, $tempZipName) = $this->saveTempContent($html);
-        $tempFolder = dirname($tempZipPath);
-        // echo "tempZipPath=$tempZipPath<br>";
-        // echo "tempFolder=$tempFolder<br>";
-        // exit;
+        // Resolve the target service + TLS policy up front: the resource-cache
+        // capability probe and delta-sync need them BEFORE we assemble the zip.
+        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io";
+        $serviceHost = rtrim(self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE), "/");
+        $target_url = self::get($settings, 'serviceUrl', $serviceHost . "/api/export");
+        // Verify the service's TLS cert by default — the request carries the
+        // Bearer token + report content. Self-signed / private export servers
+        // can opt out with settings.verifySsl = false.
+        $verifySsl = self::get($settings, 'verifySsl', true);
+
+        // Resource cache (opt-in, additive). Detect server support once (cached);
+        // if supported, opportunistically delta-sync the shared hash set (gated,
+        // failure-safe). Any problem here just leaves caching inactive.
+        $rc = null;
+        $cacheActive = false;
+        $rcConfig = self::get($settings, 'resourceCache', null);
+        if (is_array($rcConfig) && self::get($rcConfig, 'enabled', false) === true) {
+            $rc = new ResourceCache($rcConfig, $target_url, $secretToken);
+            try {
+                $cacheActive = $rc->capabilitySupported($serviceHost, $verifySsl);
+                if ($cacheActive) {
+                    $rc->maybeSync($serviceHost, $verifySsl);
+                }
+            } catch (\Exception $e) {
+                $cacheActive = false;
+            }
+        }
+
+        list($exportHtmlPath, $tempZipPath, $tempZipName, $manifest, $tempPath, $manifestMap)
+            = $this->saveTempContent($html, $cacheActive ? $rc : null);
 
         $margin = isset($options['margin']) ? $options['margin'] : null;
         if (is_string($margin)) {
@@ -699,17 +965,12 @@ class Exporter
             'fileToExport' => curl_file_create($file_name_with_full_path, 'application/zip', $tempZipName),
             'options' => ! empty($options) ? json_encode($options) : "{}"
         );
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:1982";
-        // $CLOUD_EXPORT_SERVICE = "http://localhost:8000";
-        $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io";
-        $serviceHost = self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE);
-        $serviceHost = rtrim($serviceHost, "/");
-        $target_url = self::get($settings, 'serviceUrl', $serviceHost . "/api/export");
-
-        // Verify the service's TLS cert by default — the request carries the
-        // Bearer token + report content. Self-signed / private export servers
-        // can opt out with settings.verifySsl = false.
-        $verifySsl = self::get($settings, 'verifySsl', true);
+        // Attach the resource manifest only when caching is active and something
+        // is actually omitted; otherwise this stays a plain full-zip export and
+        // the wire is byte-identical to a non-cache client.
+        if ($cacheActive && !empty($manifest)) {
+            $postfields['resourceManifest'] = json_encode(array('algo' => 'sha256', 'assets' => $manifest));
+        }
 
         $curlOptions = array(
             CURLOPT_URL => $target_url,
@@ -729,65 +990,35 @@ class Exporter
             // CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4
         ); // cURL options
 
-        $responseHeaders = array();
-        $lastException = null;
+        $sendCtx = array(
+            'rc'           => $rc,
+            'manifestMap'  => $manifestMap,
+            'tempPath'     => $tempPath,
+            'tempZipPath'  => $tempZipPath,
+            'tempZipName'  => $tempZipName,
+            'retries'      => $retries,
+            'retryDelayMs' => $retryDelayMs,
+        );
 
         try {
-            for ($attempt = 0; $attempt <= $retries; $attempt++) {
-                $ch = curl_init();
-                curl_setopt_array($ch, $curlOptions);
-
-                // Capture response headers without changing body handling.
-                // CURLOPT_HEADER stays false; HEADERFUNCTION writes raw headers to a
-                // local array so we can parse Retry-After on retryable responses.
-                $responseHeaders = array();
-                curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $header) use (&$responseHeaders) {
-                    $responseHeaders[] = $header;
-                    return strlen($header);
-                });
-
-                try {
-                    $response = curl_exec($ch);
-                    $cInfo = curl_getinfo($ch);
-
-                    if (curl_errno($ch)) {
-                        $curlErrno = curl_errno($ch);
-                        $curlError = curl_error($ch);
-
-                        if ($retries === 0 || $attempt >= $retries || !in_array($curlErrno, array(6, 7, 28, 35, 52, 56))) {
-                            throw new \Exception("Error when sending request: " . $curlError);
-                        }
-                        $lastException = new \Exception("Error when sending request: " . $curlError);
-                    } else if ($cInfo['http_code'] != 200) {
-                        if ($retries === 0 || $attempt >= $retries || !in_array($cInfo['http_code'], array(502, 503, 504))) {
-                            throw new \Exception(
-                                "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
-                            );
-                        }
-                        $lastException = new \Exception(
-                            "Export request failed with HTTP " . $cInfo['http_code'] . ": " . $response
-                        );
-                    } else {
-                        return $response;
-                    }
-                } finally {
-                    curl_close($ch);
-                }
-
-                // Backoff before next retry: exponential with Retry-After override.
-                $delayMs = $retryDelayMs * pow(2, $attempt);
-                foreach ($responseHeaders as $headerLine) {
-                    if (preg_match('/^retry-after:\s*(\d+)/i', $headerLine, $m)) {
-                        $delayMs = max($delayMs, (int)$m[1] * 1000);
-                        break;
-                    }
-                }
-                $delayMs = min($delayMs, 30000);
-                usleep($delayMs * 1000);
+            try {
+                $ctx = $sendCtx;
+                $ctx['cacheActive'] = $cacheActive;
+                return $this->runSendLoop($curlOptions, $postfields, $ctx);
+            } catch (ResourceCacheFallback $fb) {
+                // A resource-cache problem must NEVER break an export: rebuild a
+                // plain full zip (every file is still on disk) and resend once
+                // with caching disabled and no manifest.
+                $this->addWarning($target_url, 'resource_cache_fallback');
+                $this->zipWholeFolder($tempPath, $tempZipPath);
+                unset($postfields['resourceManifest']);
+                $postfields['fileToExport'] = curl_file_create($tempZipPath, 'application/zip', $tempZipName);
+                $ctx = $sendCtx;
+                $ctx['cacheActive'] = false;
+                $ctx['rc'] = null;
+                $ctx['manifestMap'] = array();
+                return $this->runSendLoop($curlOptions, $postfields, $ctx);
             }
-
-            // All attempts exhausted — throw the last captured error.
-            throw $lastException;
         } finally {
             if (!self::$debug) {
                 ob_end_clean();
