@@ -209,7 +209,7 @@ class Exporter
     // entry { path, hash } and mark the file for omission from the upload zip.
     // Fidelity-safe: a locally modified asset hashes to something NOT in the set
     // and is therefore uploaded normally — a hit can never swap in wrong bytes.
-    private function buildResourceManifest($tempPath, $rc, &$manifest, &$manifestMap, &$omit)
+    private function buildResourceManifest($tempPath, $rc, &$manifest, &$manifestMap, &$omit, $declareShipped = false)
     {
         $realPath = realpath($tempPath);
         if ($realPath === false) {
@@ -237,6 +237,14 @@ class Exporter
                 $manifest[] = array('path' => $rel, 'hash' => $h);
                 $manifestMap[$h] = $rel;
                 $omit[$rel] = true;
+            } elseif ($declareShipped) {
+                // cacheCustom (T2.2): declare this shipped-but-not-yet-believed
+                // asset so the server ingests + caches it (per the requested
+                // scope) and confirms it via X-Resource-Cached — warming SELF so
+                // the NEXT export can omit it. Deliberately NOT added to $omit:
+                // the bytes still ship in this zip (no 409, no cold-start gap).
+                $manifest[] = array('path' => $rel, 'hash' => $h);
+                $manifestMap[$h] = $rel;
             }
         }
     }
@@ -521,7 +529,7 @@ class Exporter
         }
     }
 
-    function saveTempContent($content, $rc = null)
+    function saveTempContent($content, $rc = null, $declareShipped = false)
     {
         $settings = $this->settings;
         $tmpFolder = $this->getTempFolder();
@@ -628,7 +636,7 @@ class Exporter
             $manifestMap = array();
             $omit = array();
             if ($rc !== null) {
-                $this->buildResourceManifest($tempPath, $rc, $manifest, $manifestMap, $omit);
+                $this->buildResourceManifest($tempPath, $rc, $manifest, $manifestMap, $omit, $declareShipped);
             }
             if (!empty($omit)) {
                 $this->zipFolderExcept($tempPath, $tempZipPath, $omit);
@@ -853,6 +861,7 @@ class Exporter
 
             if ($code === 200) {
                 if ($cacheActive && $ctx['rc'] !== null) {
+                    error_log('RCDBG received headers = ' . json_encode($r['headers']));
                     $confirmed = $this->parseResourceCachedHeader($r['headers']);
                     // Only ever grow SELF with hashes we actually sent and the
                     // server confirmed — never trust arbitrary server data.
@@ -962,7 +971,7 @@ class Exporter
         }
 
         list($exportHtmlPath, $tempZipPath, $tempZipName, $manifest, $tempPath, $manifestMap)
-            = $this->saveTempContent($html, $cacheActive ? $rc : null);
+            = $this->saveTempContent($html, $cacheActive ? $rc : null, $cacheActive && $cacheCustomScope !== null);
 
         $margin = isset($options['margin']) ? $options['margin'] : null;
         if (is_string($margin)) {

@@ -265,4 +265,47 @@ foreach ($warnings as $w) {
 }
 check($found, "warning: getWarnings() includes resource-cache: $want");
 
+// --- Case 12: cacheCustom declare-on-ship warms a COLD client (T2.2) -------
+// Empty bundled set + server knows nothing: without declare-on-ship the client
+// would send NO manifest and never warm. With cacheCustom set, it must declare
+// the SHIPPED asset so the server can cache + confirm it.
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array()));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array()), 'cacheDir' => $dir,
+        'cacheCustom' => array('scope' => 'tenant')),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'declare-ship: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'declare-ship: manifest SENT despite empty bundled set');
+check($last['cacheCustom'] === 'tenant', 'declare-ship: cacheCustom===tenant on the wire');
+check($last['status'] === 200, 'declare-ship: 200, no 409 (declared asset is shipped)');
+check(in_array($jsName, $last['zipEntries']), 'declare-ship: js SHIPPED (declared, not omitted)');
+check($last['assetCount'] >= 1, 'declare-ship: js declared in the manifest');
+$store = json_decode(file_get_contents(storeFor($dir, $endpoint, 't')), true);
+check(isset($store['self'][$jsHash]), 'declare-ship: shipped asset confirmed into SELF');
+
+// --- Case 13: the NEXT export now OMITS the warmed asset ------------------
+// Fresh process (reset statics); SELF persisted on disk in $dir; server now
+// holds the asset. The client should omit it -> smaller upload.
+ResourceCache::resetStaticCaches();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex2 = new Exporter(array('secretToken' => 't'));
+$ex2->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array()), 'cacheDir' => $dir,
+        'cacheCustom' => array('scope' => 'tenant')),
+);
+$body2 = $ex2->cloudRequest('pdf', array());
+check(strpos($body2, '%PDF') === 0, 'warm-2nd: got a PDF body');
+$last2 = lastReq();
+check($last2['status'] === 200, 'warm-2nd: 200 (no 409)');
+check(!in_array($jsName, $last2['zipEntries']), 'warm-2nd: js now OMITTED (SELF warmed by export 1)');
+
 echo "resourceCache_service_test PASSED\n";
