@@ -261,6 +261,36 @@ Per export: believed assets are **omitted** (listed in the manifest); the server
 server confirms what it now holds via `X-Resource-Cached`, which the client
 records into SELF so the **next** export omits them.
 
+### Staying current with the shared set (SYNCED)
+
+`BUNDLED` is **frozen at the client release** — it only knows the library that
+existed when this version shipped. `SYNCED` keeps you current with everything the
+server has since made *shared* (custom assets that reached enough tenants to
+promote, newly pre-seeded library additions) **without a client upgrade or
+re-bundle**. It's a throttled delta pull:
+
+```
+  GET /api/cache/manifest?since=<cursor>
+    ◄─ { added:[<hash>,…], cursor:<N> }      # a new client sends ?since=0 once,
+                                             # then only asks for what's newer
+```
+
+It runs at most once per `syncInterval` (default **daily**), before the export is
+assembled, and is failure-safe — a down or slow manifest never blocks a render.
+
+**Round trips.** The manifest GET and the export POST are deliberately separate
+requests (sync must not sit on the render path). So on the *one* export per day
+that a sync is due you pay **two** round trips; every other export that day is a
+single POST. It is not two round trips per export. Set `sync = false` to drop the
+GET entirely (rely on `BUNDLED ∪ SELF`), or `syncInterval = 0` to sync on every
+export for a demo.
+
+> **Example.** You ship 1.10.0 to customer A; its bundle doesn't know a new widget
+> asset `sparkline.js`. Later, three other customers each cache it, so the server
+> promotes it to the shared pool. On A's next daily sync the client pulls that hash
+> into SYNCED — and the next time A's report includes `sparkline.js`, the client
+> **omits** it (0 bytes uploaded), even though A never bundled or uploaded it.
+
 ### Caching your own custom resources
 
 Library assets warm automatically from the bundled set. Your **own** CSS/JS are
