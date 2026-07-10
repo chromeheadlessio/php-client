@@ -1023,12 +1023,18 @@ class Exporter
             if (!self::$debug) {
                 ob_end_clean();
             }
-            // Always clean up this request's own temp artifacts, on success or
-            // failure, so the system temp dir does not accumulate over time.
-            $this->cleanupTempArtifacts($tempZipPath);
-            // Back-compat: legacy whole-folder sweep for local-temp mode only.
             $useLocalTempFolder = self::get($settings, 'useLocalTempFolder', false);
             $autoDeleteLocalTempFile = self::get($settings, 'autoDeleteLocalTempFile', false);
+            // Preserve this request's zip + extract dir ONLY when the caller has
+            // explicitly opted into a local temp folder AND disabled auto-delete
+            // (the documented inspection/debug combo — files land in <script>/tmp).
+            // In every other case — notably the default system-temp path — always
+            // clean up so tmp cannot accumulate over time.
+            $keepForInspection = $useLocalTempFolder && !$autoDeleteLocalTempFile;
+            if (!$keepForInspection) {
+                $this->cleanupTempArtifacts($tempZipPath);
+            }
+            // Back-compat: legacy whole-folder sweep for local-temp mode only.
             if ($useLocalTempFolder && $autoDeleteLocalTempFile) {
                 $di = new \RecursiveDirectoryIterator(dirname($tempZipPath), \FilesystemIterator::SKIP_DOTS);
                 $ri = new \RecursiveIteratorIterator($di, \RecursiveIteratorIterator::CHILD_FIRST);
