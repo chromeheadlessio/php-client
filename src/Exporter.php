@@ -798,6 +798,22 @@ class Exporter
         return $out;
     }
 
+    // Surface X-Resource-Cache-Warning response tokens via getWarnings().
+    // Matches the existing warning shape: array('url' => $url, 'reason' => ...).
+    private function parseResourceCacheWarning($headers, $url)
+    {
+        foreach ($headers as $headerLine) {
+            if (preg_match('/^x-resource-cache-warning:\s*(.+?)\s*$/i', $headerLine, $m)) {
+                foreach (explode(',', $m[1]) as $token) {
+                    $token = trim($token);
+                    if ($token !== '') {
+                        $this->addWarning($url, 'resource-cache: ' . $token);
+                    }
+                }
+            }
+        }
+    }
+
     // Send the export with transient-retry backoff (as before) PLUS, when the
     // cache is active: a single 409 { missing } re-send (adding just the missing
     // assets back into the zip) and merging the server's confirmation into SELF.
@@ -844,6 +860,9 @@ class Exporter
                     if (!empty($confirmed)) {
                         $ctx['rc']->noteConfirmed($confirmed);
                     }
+                }
+                if ($cacheActive) {
+                    $this->parseResourceCacheWarning($r['headers'], $curlOptions[CURLOPT_URL]);
                 }
                 return $r['body'];
             }
@@ -922,7 +941,14 @@ class Exporter
         // failure-safe). Any problem here just leaves caching inactive.
         $rc = null;
         $cacheActive = false;
+        $cacheCustomScope = null;
         $rcConfig = self::get($settings, 'resourceCache', null);
+        if (is_array($rcConfig) && isset($rcConfig['cacheCustom']) && is_array($rcConfig['cacheCustom'])) {
+            $scope = self::get($rcConfig['cacheCustom'], 'scope');
+            if ($scope === 'tenant' || $scope === 'global') {
+                $cacheCustomScope = $scope;
+            }
+        }
         if (is_array($rcConfig) && self::get($rcConfig, 'enabled', false) === true) {
             $rc = new ResourceCache($rcConfig, $target_url, $secretToken);
             try {
@@ -969,7 +995,11 @@ class Exporter
         // is actually omitted; otherwise this stays a plain full-zip export and
         // the wire is byte-identical to a non-cache client.
         if ($cacheActive && !empty($manifest)) {
-            $postfields['resourceManifest'] = json_encode(array('algo' => 'sha256', 'assets' => $manifest));
+            $manifestPayload = array('algo' => 'sha256', 'assets' => $manifest);
+            if ($cacheCustomScope !== null) {
+                $manifestPayload['cacheCustom'] = $cacheCustomScope;
+            }
+            $postfields['resourceManifest'] = json_encode($manifestPayload);
         }
 
         $curlOptions = array(

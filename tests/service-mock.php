@@ -87,10 +87,14 @@ if ($uri === '/api/export' && $method === 'POST') {
     $manifestRaw = isset($_POST['resourceManifest']) ? $_POST['resourceManifest'] : null;
     $hadManifest = ($manifestRaw !== null);
     $assets = array();
+    $cacheCustom = null;
     if ($hadManifest) {
         $m = json_decode($manifestRaw, true);
         if (is_array($m) && isset($m['assets']) && is_array($m['assets'])) {
             $assets = $m['assets'];
+        }
+        if (is_array($m) && isset($m['cacheCustom'])) {
+            $cacheCustom = $m['cacheCustom'];
         }
     }
 
@@ -107,15 +111,21 @@ if ($uri === '/api/export' && $method === 'POST') {
 
     if (!empty($missing)) {
         recordLast(array('hadManifest' => $hadManifest, 'assetCount' => count($assets),
-            'zipEntries' => array_keys($zipEntries), 'status' => 409, 'missing' => $missing));
+            'zipEntries' => array_keys($zipEntries), 'status' => 409, 'missing' => $missing,
+            'cacheCustom' => $cacheCustom));
         sendJson(409, array('missing' => $missing));
         return true;
     }
 
     recordLast(array('hadManifest' => $hadManifest, 'assetCount' => count($assets),
-        'zipEntries' => array_keys($zipEntries), 'status' => 200, 'missing' => array()));
+        'zipEntries' => array_keys($zipEntries), 'status' => 200, 'missing' => array(),
+        'cacheCustom' => $cacheCustom));
     if (!empty($allHashes)) {
         header('X-Resource-Cached: ' . implode(',', $allHashes));
+    }
+    $warning = ctlGet('warning', null);
+    if ($warning !== null) {
+        header('X-Resource-Cache-Warning: ' . $warning);
     }
     header('Content-Type: application/pdf');
     echo "%PDF-1.4 mock-export\n";

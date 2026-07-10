@@ -175,4 +175,94 @@ $ex->settings = array(
 $body = $ex->cloudRequest('pdf', array());
 check(strpos($body, '%PDF') === 0, 'sync-fail: export still succeeded despite a failing sync');
 
+// --- Case 7: cacheCustom:"tenant" in manifest ------------------------------
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir,
+        'cacheCustom' => array('scope' => 'tenant')),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'custom-tenant: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'custom-tenant: manifest sent');
+check($last['cacheCustom'] === 'tenant', 'custom-tenant: cacheCustom===tenant in the manifest');
+
+// --- Case 8: cacheCustom:"global" in manifest -----------------------------
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir,
+        'cacheCustom' => array('scope' => 'global')),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'custom-global: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'custom-global: manifest sent');
+check($last['cacheCustom'] === 'global', 'custom-global: cacheCustom===global in the manifest');
+
+// --- Case 9: NO cacheCustom in settings -> manifest has NO cacheCustom key --
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'no-custom: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'no-custom: manifest sent');
+check($last['cacheCustom'] === null, 'no-custom: cacheCustom key absent from manifest');
+
+// --- Case 10: invalid scope -> NOT attached (byte-identical default) -------
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir,
+        'cacheCustom' => array('scope' => 'public')),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'invalid-scope: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'invalid-scope: manifest sent');
+check($last['cacheCustom'] === null, 'invalid-scope: cacheCustom NOT attached (invalid value)');
+
+// --- Case 11: X-Resource-Cache-Warning -> getWarnings() surfaces it -------
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash),
+    'warning' => 'global-share-disabled'));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'warning: got a PDF body');
+$warnings = $ex->getWarnings();
+$found = false;
+$want = 'global-share-disabled';
+foreach ($warnings as $w) {
+    if (strpos($w['reason'], 'resource-cache: ') !== false && strpos($w['reason'], $want) !== false) {
+        $found = true;
+    }
+}
+check($found, "warning: getWarnings() includes resource-cache: $want");
+
 echo "resourceCache_service_test PASSED\n";

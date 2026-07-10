@@ -22,22 +22,31 @@
    path) ∪ SELF (this install's own server-confirmed uploads). SYNCED+SELF are
    persisted atomically in `cacheDir`, keyed by (endpoint, token).
 4. Resilient: on a `409 { missing }` the client re-sends once with just the
-   missing assets added back; on ANY cache-path problem it falls back to a plain
-   full-zip export. A resource-cache issue never breaks or blocks an export.
+    missing assets added back; on ANY cache-path problem it falls back to a plain
+    full-zip export. A resource-cache issue never breaks or blocks an export.
+5. Per-request `resourceCache.cacheCustom = { scope: "tenant" | "global" }` to
+   bind custom resources to the requesting token (`"tenant"`) or force-promote
+   them to the shared pool (`"global"`, gated by the server's
+   `RESOURCE_ALLOW_CUSTOM_SHARE` flag — the `X-Resource-Cache-Warning`
+   response header surfaces `global-share-disabled` or `pin-cap-exceeded` when
+   the server cannot honour the request).
+6. `X-Resource-Cache-Warning` response header tokens surfaced via
+   `getWarnings()` as `"resource-cache: <token>"` entries so the caller can
+   observe server-side capacity limits without scraping logs.
 
 This release also folds in the **resilience + speed batch** (previously staged
 as 1.9.0, not separately released):
 
-5. Bounded timeouts on every resource/page fetch (`resourceTimeout` = 10s,
-   `pageTimeout` = 60s) — a dead resource URL no longer stalls the export.
-6. Opt-in retry with exponential backoff honoring `Retry-After` (`retries` = 0
-   by default = exact prior behavior; only curl errno 6/7/28/35/52/56 or HTTP
-   502/503/504 are retried).
-7. `getWarnings()` on `Exporter`/`Service`: failed resource downloads are now
-   inspectable (url + reason) instead of silent.
-8. Opt-in parallel resource downloads via `curl_multi` (`parallelDownloads` =
-   false by default, `parallelConcurrency` = 8), chunked so every URL is
-   prefetched; byte-identical output vs sequential mode, enforced by tests.
+7. Bounded timeouts on every resource/page fetch (`resourceTimeout` = 10s,
+    `pageTimeout` = 60s) — a dead resource URL no longer stalls the export.
+8. Opt-in retry with exponential backoff honoring `Retry-After` (`retries` = 0
+    by default = exact prior behavior; only curl errno 6/7/28/35/52/56 or HTTP
+    502/503/504 are retried).
+9. `getWarnings()` on `Exporter`/`Service`: failed resource downloads are now
+    inspectable (url + reason) instead of silent.
+10. Opt-in parallel resource downloads via `curl_multi` (`parallelDownloads` =
+    false by default, `parallelConcurrency` = 8), chunked so every URL is
+    prefetched; byte-identical output vs sequential mode, enforced by tests.
 
 No wire-format change from any of the above: endpoint, multipart fields,
 defaults and auth header are untouched.
