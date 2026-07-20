@@ -1,6 +1,6 @@
 # Change Log
 
-## Version 1.10.0
+## Version 2.0.0
 1. **Resource cache (opt-in, additive).** When enabled and the target export
    service advertises support, the client omits assets it believes are already
    cached server-side from the upload zip and lists them in a `resourceManifest`

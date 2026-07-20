@@ -221,7 +221,7 @@ $service->export(...)->jpg([
 ])->save("../img/myfile.jpg");
 ```
 
-## Resource cache (v1.10.0+)
+## Resource cache (v2.0.0+)
 
 Reports re-ship the same widget CSS/JS, fonts and chart libraries on every export.
 With the resource cache **on**, the client omits resources the server already
@@ -285,7 +285,7 @@ single POST. It is not two round trips per export. Set `sync = false` to drop th
 GET entirely (rely on `BUNDLED ∪ SELF`), or `syncInterval = 0` to sync on every
 export for a demo.
 
-> **Example.** You ship 1.10.0 to customer A; its bundle doesn't know a new widget
+> **Example.** You ship 2.0.0 to customer A; its bundle doesn't know a new widget
 > asset `sparkline.js`. Later, three other customers each cache it, so the server
 > promotes it to the shared pool. On A's next daily sync the client pulls that hash
 > into SYNCED — and the next time A's report includes `sparkline.js`, the client
