@@ -164,5 +164,41 @@ check($zip->locateName($jsName) !== false, 'miss: js INCLUDED in the zip (upload
 $zip->close();
 $exMiss->cleanupTempArtifacts($rMiss[1]);
 
+// ---------------------------------------------------------------------------
+// Part 3: default-on gate + scope resolution (no network, task-232)
+// ---------------------------------------------------------------------------
+$V1 = 'https://service.chromeheadless.io';
+$V2 = 'https://service.chromeheadless.io/v2';
+
+// Cases 1-2: no resourceCache key at all -> sniff decides.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array(), $endpoint, 't'))->isEnabled($V2) === true, 'gate: no config + /v2 base -> on by default');
+check((new ResourceCache(array(), $endpoint, 't'))->isEnabled($V1) === false, 'gate: no config + v1 base -> off by default');
+
+// Cases 3-4: an explicit enabled key beats the sniff in both directions.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array('enabled' => false), $endpoint, 't'))->isEnabled($V2) === false, 'gate: enabled=false + /v2 base -> explicit wins');
+check((new ResourceCache(array('enabled' => true), $endpoint, 't'))->isEnabled($V1) === true, 'gate: enabled=true + v1 base -> explicit wins');
+
+// Case 5: enabled => null is an explicit (falsy) answer, NOT the sniff. This is
+// why the gate uses array_key_exists rather than isset.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array('enabled' => null), $endpoint, 't'))->isEnabled($V2) === false, 'gate: enabled=null + /v2 base -> explicit falsy, NOT the sniff');
+
+// Case 6: a trailing slash on the /v2 base still matches.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array(), $endpoint, 't'))->isEnabled($V2 . '/') === true, 'gate: /v2/ base (trailing slash) -> on');
+
+// Case 7: the suffix match must not be a substring match.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array(), $endpoint, 't'))->isEnabled($V2 . '2') === false, 'gate: base ending /v22 -> NOT a /v2 match');
+check((new ResourceCache(array(), $endpoint, 't'))->isEnabled($V2 . 'beta') === false, 'gate: base ending /v2beta -> NOT a /v2 match');
+
+// Case 8-10: cacheCustom scope resolution.
+ResourceCache::resetStaticCaches();
+check((new ResourceCache(array(), $endpoint, 't'))->cacheCustomScope() === 'global', 'scope: no cacheCustom key -> global default');
+check((new ResourceCache(array('cacheCustom' => array('scope' => 'tenant')), $endpoint, 't'))->cacheCustomScope() === 'tenant', 'scope: cacheCustom.scope=tenant -> tenant');
+check((new ResourceCache(array('cacheCustom' => array('scope' => 'nonsense')), $endpoint, 't'))->cacheCustomScope() === null, 'scope: cacheCustom.scope=nonsense -> null (no key sent)');
+
 rrmdir($root);
 echo "resourceCache_unit_test PASSED\n";

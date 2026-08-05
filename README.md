@@ -224,26 +224,44 @@ $service->export(...)->jpg([
 ## Resource cache (v2.0.0+)
 
 Reports re-ship the same widget CSS/JS, fonts and chart libraries on every export.
-With the resource cache **on**, the client omits resources the server already
-holds and the server materializes them locally — a standard report export shrinks
-to just the HTML. It is **opt-in** and **failure-safe**: any cache-path problem
-falls back to a plain full-zip export, so it never breaks or blocks a render. It
-requires a cache-enabled service (`RESOURCE_CACHE_ENABLED`).
+With the resource cache on, the client omits resources the server already holds
+and the server materializes them locally — a standard report export shrinks to
+just the HTML. It is failure-safe: any cache-path problem falls back to a plain
+full-zip export, so it never breaks or blocks a render. It requires a
+cache-enabled service (`RESOURCE_CACHE_ENABLED`).
+
+On a version 2 service base (a service URL ending in `/v2`) the cache is on by
+default with no configuration. Anywhere else, including the version 1 host, it
+stays opt-in: set `'enabled' => true`. An explicit `'enabled' => false` opts out
+on any host.
 
 ### Enable it
+
+On a `/v2` service base there is nothing to configure — the cache is already on.
+On any other host, opt in explicitly:
 
 ```php
 $settings = [
     // ... your usual settings (serviceHost, token, html/url, ...) ...
     'resourceCache' => [
-        'enabled' => true,
+        'enabled' => true,     // required on non-v2 hosts; a /v2 base defaults on
     ],
 ];
 $report->run()->cloudExport($view)->settings($settings)->pdf($opts)->toBrowser($name);
 ```
 
-`serviceHost` **must** point at the cache-enabled service — the client probes
-`serviceHost/api/capabilities` and only caches if it advertises support.
+The default is decided by the service URL, not by which version of this package
+you run. If the resolved base ends in `/v2`, the cache starts on and
+`'enabled' => false` is how you opt out; on the v1 host or a custom endpoint that
+is not the canonical `.../api/export` shape it starts off and `'enabled' => true`
+opts in. Upgrading a v2 install that already worked without a `resourceCache`
+block changes it from sending full zips to sending manifests. Expected, and
+that is the point.
+
+The capability probe and the belief-store delta sync go to the same base as the
+export request, resolved from the final export URL, so setting only
+`serviceUrl` works exactly like setting `serviceHost`. The client probes the
+resolved base's `/api/capabilities` and only caches if it advertises support.
 
 ### How the belief set works
 
@@ -256,18 +274,18 @@ SYNCED    GET /api/cache/manifest (delta)   globally-shared hashes, off the hot 
 SELF      X-Resource-Cached confirmations   this token's own confirmed uploads
 ```
 
-Per export: believed assets are **omitted** (listed in the manifest); the server
+Per export: believed assets are omitted (listed in the manifest); the server
 409s with any it doesn't actually have; the client re-sends just those once. The
 server confirms what it now holds via `X-Resource-Cached`, which the client
-records into SELF so the **next** export omits them.
+records into SELF so the next export omits them.
 
 ### Staying current with the shared set (SYNCED)
 
-`BUNDLED` is **frozen at the client release** — it only knows the library that
+`BUNDLED` is frozen at the client release — it only knows the library that
 existed when this version shipped. `SYNCED` keeps you current with everything the
-server has since made *shared* (custom assets that reached enough tenants to
-promote, newly pre-seeded library additions) **without a client upgrade or
-re-bundle**. It's a throttled delta pull:
+server has since made shared (custom assets that reached enough tenants to
+promote, newly pre-seeded library additions) without a client upgrade or
+re-bundle. It's a throttled delta pull:
 
 ```
   GET /api/cache/manifest?since=<cursor>
@@ -275,26 +293,27 @@ re-bundle**. It's a throttled delta pull:
                                              # then only asks for what's newer
 ```
 
-It runs at most once per `syncInterval` (default **daily**), before the export is
+It runs at most once per `syncInterval` (default daily), before the export is
 assembled, and is failure-safe — a down or slow manifest never blocks a render.
 
-**Round trips.** The manifest GET and the export POST are deliberately separate
-requests (sync must not sit on the render path). So on the *one* export per day
-that a sync is due you pay **two** round trips; every other export that day is a
+Round trips. The manifest GET and the export POST are deliberately separate
+requests (sync must not sit on the render path). So on the one export per day
+that a sync is due you pay two round trips; every other export that day is a
 single POST. It is not two round trips per export. Set `sync = false` to drop the
 GET entirely (rely on `BUNDLED ∪ SELF`), or `syncInterval = 0` to sync on every
 export for a demo.
 
-> **Example.** You ship 2.0.0 to customer A; its bundle doesn't know a new widget
-> asset `sparkline.js`. Later, three other customers each cache it, so the server
-> promotes it to the shared pool. On A's next daily sync the client pulls that hash
-> into SYNCED — and the next time A's report includes `sparkline.js`, the client
-> **omits** it (0 bytes uploaded), even though A never bundled or uploaded it.
+Example: ship 2.0.0 to customer A; its bundle doesn't know a new widget asset
+`sparkline.js`. Later, three other customers each cache it, so the server promotes
+it to the shared pool. On A's next daily sync the client pulls that hash into
+SYNCED — and the next time A's report includes `sparkline.js`, the client omits
+it (0 bytes uploaded), even though A never bundled or uploaded it.
 
 ### Caching your own custom resources
 
-Library assets warm automatically from the bundled set. Your **own** CSS/JS are
-not in that set, so opt in per request with `cacheCustom`:
+Library assets warm automatically from the bundled set. Your own CSS/JS are
+not in that set, so give them a scope with `cacheCustom` (it defaults to
+`'global'` whenever the cache is active):
 
 ```php
 'resourceCache' => [
@@ -303,12 +322,12 @@ not in that set, so opt in per request with `cacheCustom`:
 ],
 ```
 
-- `scope: 'tenant'` — cache your custom assets **privately** for this token
+- `scope: 'tenant'` — cache your custom assets privately for this token
   (pinned, survives eviction). The first export declares + ships them; from the
-  **second** export they're omitted.
+  second export they're omitted.
 - `scope: 'global'` — force-share them into the pool so your other tokens/tenants
   dedupe immediately. Requires `RESOURCE_ALLOW_CUSTOM_SHARE` on the server (else it
-  degrades to `tenant`); note this **publishes** the hashes — use only for
+  degrades to `tenant`); note this publishes the hashes — use only for
   non-secret assets.
 
 Server warnings (`global-share-disabled`, `pin-cap-exceeded`) surface via
@@ -318,8 +337,8 @@ Server warnings (`global-share-disabled`, `pin-cap-exceeded`) surface via
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `false` | Master switch (must be exactly `true`). |
-| `cacheCustom` | *(none)* | `['scope' => 'tenant'\|'global']` — cache your own custom resources. |
+| `enabled` | on a `/v2` base, else `false` | Master switch; an explicit `true`/`false` always wins. |
+| `cacheCustom` | `'global'` | `['scope' => 'tenant'\|'global']` — scope for your own custom resources. |
 | `sync` | `true` | Pull the shared hash-set via `/api/cache/manifest`. |
 | `syncInterval` | `86400` | Min seconds between delta-syncs. |
 | `capabilityTtl` | `300` | Seconds to cache the capability probe. |

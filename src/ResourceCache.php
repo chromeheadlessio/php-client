@@ -83,10 +83,32 @@ class ResourceCache
         return isset($this->config[$key]) ? $this->config[$key] : $default;
     }
 
-    /** Caching is opt-in: OFF unless settings.resourceCache.enabled === true. */
-    public function isEnabled()
+    /**
+     * Caching defaults ON against a version 2 service base and OFF everywhere
+     * else. An explicit `enabled` key always wins, in both directions.
+     */
+    public function isEnabled($serviceBase)
     {
-        return $this->cfg('enabled', false) === true;
+        if (array_key_exists('enabled', $this->config)) {
+            return $this->config['enabled'] === true;
+        }
+        return (bool) preg_match('#/v2$#', rtrim((string) $serviceBase, '/'));
+    }
+
+    /**
+     * Scope for custom (non-bundled) resources. Defaults to `global` because the
+     * v2 service runs with RESOURCE_ALLOW_CUSTOM_SHARE on; a server with the flag
+     * off answers with the `global-share-disabled` warning token rather than
+     * failing. Returns null to send no cacheCustom key at all.
+     */
+    public function cacheCustomScope()
+    {
+        $cc = $this->cfg('cacheCustom', null);
+        if (is_array($cc) && array_key_exists('scope', $cc)) {
+            $scope = $cc['scope'];
+            return ($scope === 'tenant' || $scope === 'global') ? $scope : null;
+        }
+        return 'global';
     }
 
     /** Delta-sync is on by default (but gated by syncInterval) when caching is on. */
@@ -264,10 +286,13 @@ class ResourceCache
      * Whether the server advertises resource-cache support. Cached in-process
      * and in the persistent store (TTL capabilityTtl, default 300s) so it is at
      * most one cheap GET per TTL window. Any failure => false => full-zip export.
+     *
+     * $serviceBase is the base resolved from the final export URL, not the raw
+     * serviceHost setting: the two can differ when the caller sets serviceUrl.
      */
-    public function capabilitySupported($serviceHost, $verifySsl)
+    public function capabilitySupported($serviceBase, $verifySsl)
     {
-        $memoKey = (string) $serviceHost;
+        $memoKey = (string) $serviceBase;
         if (isset(self::$capMemo[$memoKey])) {
             return self::$capMemo[$memoKey];
         }
@@ -276,7 +301,7 @@ class ResourceCache
         if ($this->capability !== null && (time() - $this->capability['ts']) < $ttl) {
             return self::$capMemo[$memoKey] = (bool) $this->capability['supported'];
         }
-        $url = rtrim((string) $serviceHost, '/') . '/api/capabilities';
+        $url = rtrim((string) $serviceBase, '/') . '/api/capabilities';
         $json = $this->httpGetJson($url, $verifySsl, 5);
         $supported = is_array($json) && !empty($json['resourceCache']);
         $this->capability = array('supported' => $supported, 'ts' => time());
@@ -291,8 +316,10 @@ class ResourceCache
      * and merge them into SYNCED. Gated by syncInterval (default daily) so it is
      * effectively never on the hot path. Never throws; a sync failure must not
      * block or break an export.
+     *
+     * Takes the same resolved base as capabilitySupported().
      */
-    public function maybeSync($serviceHost, $verifySsl)
+    public function maybeSync($serviceBase, $verifySsl)
     {
         if (!$this->syncEnabled()) {
             return;
@@ -302,7 +329,7 @@ class ResourceCache
         if ($this->syncedAt > 0 && (time() - $this->syncedAt) < $interval) {
             return; // not due yet
         }
-        $url = rtrim((string) $serviceHost, '/') . '/api/cache/manifest?since=' . rawurlencode((string) $this->cursor);
+        $url = rtrim((string) $serviceBase, '/') . '/api/cache/manifest?since=' . rawurlencode((string) $this->cursor);
         $json = $this->httpGetJson($url, $verifySsl, 10);
         // Throttle regardless of outcome so a persistently-failing server is not
         // hammered once per export.

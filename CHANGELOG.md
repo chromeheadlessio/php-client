@@ -1,5 +1,30 @@
 # Change Log
 
+## Version 2.1.0
+1. The resource cache now defaults ON when the resolved service base ends in
+   `/v2`, and OFF everywhere else including the version 1 host. An explicit
+   `resourceCache.enabled` key still wins in both directions. Be aware if you are
+   already pointing this client at the v2 host with no `resourceCache` block:
+   after this upgrade you will start sending manifests instead of full zips.
+   That is the intended win, and the only way this release can surprise anyone.
+2. `cacheCustom` scope now defaults to `global`. Custom resources are declared
+   for the server to ingest even when they are not believed cached yet, which
+   warms the next export with no cold-start gap; `scope: 'tenant'` is still
+   available for private, pinned caching.
+3. The service base is now derived from the final export URL. Capability probes
+   and belief-store delta syncs were previously sent to `serviceHost`; a caller
+   who set only `serviceUrl` had both GETs go to the wrong server. The export,
+   the probe and the sync now all use the same resolved base.
+4. The 409 re-send omit-set is now derived from the belief store rather than the
+   raw manifest map. Before this release, an export that mixed cached and
+   uncached assets while `cacheCustom.scope` was set would take a second 409 and
+   fall back to a plain full-zip send, silently dropping the manifest. Reachable
+   in 2.0.0 by anyone who set `cacheCustom.scope`; it becomes the default path
+   now that the scope defaults to `global`, which is why it is fixed here rather
+   than later.
+5. A stray debug `error_log()` that shipped in 2.0.0 and wrote response headers
+   to the PHP error log on every successful cached export has been removed.
+
 ## Version 2.0.0
 1. **Resource cache (opt-in, additive).** When enabled and the target export
    service advertises support, the client omits assets it believes are already

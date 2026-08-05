@@ -35,6 +35,20 @@ function recordLast($rec)
     }
 }
 
+// Monotonic per-run count of /api/export POSTs (env MOCK_COUNT, inited by
+// run-tests.sh). Lets a test assert exactly how many export requests a single
+// cloudRequest() produced.
+function bumpExportCount()
+{
+    $p = getenv('MOCK_COUNT');
+    if (!$p) {
+        return 0;
+    }
+    $n = ((int) @file_get_contents($p)) + 1;
+    @file_put_contents($p, $n);
+    return $n;
+}
+
 function sendJson($status, $arr)
 {
     http_response_code($status);
@@ -44,6 +58,12 @@ function sendJson($status, $arr)
 
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
+
+// The version 2 service hosts the same endpoints under a /v2 path prefix; strip
+// it so a client pointed at a /v2 base reaches the handlers below.
+if (strpos($uri, '/v2') === 0) {
+    $uri = substr($uri, 3);
+}
 
 if ($uri === '/api/capabilities' && $method === 'GET') {
     if (ctlGet('capability', false)) {
@@ -70,6 +90,7 @@ if ($uri === '/api/cache/manifest' && $method === 'GET') {
 }
 
 if ($uri === '/api/export' && $method === 'POST') {
+    $exportNo = bumpExportCount();
     $known = array_flip((array) ctlGet('known', array()));
 
     // List the entries actually present in the uploaded zip.
@@ -112,14 +133,14 @@ if ($uri === '/api/export' && $method === 'POST') {
     if (!empty($missing)) {
         recordLast(array('hadManifest' => $hadManifest, 'assetCount' => count($assets),
             'zipEntries' => array_keys($zipEntries), 'status' => 409, 'missing' => $missing,
-            'cacheCustom' => $cacheCustom));
+            'cacheCustom' => $cacheCustom, 'exportNo' => $exportNo));
         sendJson(409, array('missing' => $missing));
         return true;
     }
 
     recordLast(array('hadManifest' => $hadManifest, 'assetCount' => count($assets),
         'zipEntries' => array_keys($zipEntries), 'status' => 200, 'missing' => array(),
-        'cacheCustom' => $cacheCustom));
+        'cacheCustom' => $cacheCustom, 'exportNo' => $exportNo));
     if (!empty($allHashes)) {
         header('X-Resource-Cached: ' . implode(',', $allHashes));
     }

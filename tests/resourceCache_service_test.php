@@ -40,12 +40,16 @@ check($html !== false, 'fixture rc/page.html fetched');
 $probe = new Exporter(array('secretToken' => 't'));
 $probe->settings = array('baseUrl' => $base . '/rc/');
 $pr = $probe->saveTempContent($html);
-$jsName = null; $jsHash = null;
+$jsName = null; $jsHash = null; $cssName = null; $pngName = null;
 foreach (scandir($pr[4]) as $f) {
+    if ($f === '.' || $f === '..' || $f === 'export.html') continue;
     if (substr($f, -3) === '.js') { $jsName = $f; $jsHash = hash('sha256', file_get_contents($pr[4] . '/' . $f)); }
+    elseif (substr($f, -4) === '.css') { $cssName = $f; }
+    else { $pngName = $f; }
 }
 $probe->cleanupTempArtifacts($pr[1]);
 check($jsName && $jsHash, 'discovered stored js name + hash');
+check($cssName && $pngName, 'discovered stored css + png names');
 
 function setControl($arr)
 {
@@ -209,7 +213,10 @@ $last = lastReq();
 check($last['hadManifest'] === true, 'custom-global: manifest sent');
 check($last['cacheCustom'] === 'global', 'custom-global: cacheCustom===global in the manifest');
 
-// --- Case 9: NO cacheCustom in settings -> manifest has NO cacheCustom key --
+// --- Case 9: NO cacheCustom in settings -> manifest carries cacheCustom:'global' --
+// Changed in 2.1.0: cacheCustom scope defaults to 'global', so the manifest is
+// no longer key-absent when the caller set no cacheCustom. Restoring the old
+// "key absent" assertion here would encode the pre-2.1.0 behaviour.
 ResourceCache::resetStaticCaches();
 $dir = freshDir();
 setControl(array('capability' => true, 'known' => array($jsHash)));
@@ -223,7 +230,7 @@ $body = $ex->cloudRequest('pdf', array());
 check(strpos($body, '%PDF') === 0, 'no-custom: got a PDF body');
 $last = lastReq();
 check($last['hadManifest'] === true, 'no-custom: manifest sent');
-check($last['cacheCustom'] === null, 'no-custom: cacheCustom key absent from manifest');
+check($last['cacheCustom'] === 'global', 'no-custom: cacheCustom defaults to global in the manifest');
 
 // --- Case 10: invalid scope -> NOT attached (byte-identical default) -------
 ResourceCache::resetStaticCaches();
@@ -307,5 +314,112 @@ check(strpos($body2, '%PDF') === 0, 'warm-2nd: got a PDF body');
 $last2 = lastReq();
 check($last2['status'] === 200, 'warm-2nd: 200 (no 409)');
 check(!in_array($jsName, $last2['zipEntries']), 'warm-2nd: js now OMITTED (SELF warmed by export 1)');
+
+// --- Case 14: service-base derivation — serviceHost on a /v2 base ----------
+// With serviceHost ending in /v2 and no serviceUrl, the capability probe must
+// go to <host>/api/capabilities (the mock answers it) and caching activates by
+// default (no enabled key needed on a /v2 base).
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc . '/v2', 'verifySsl' => false,
+    // no 'enabled': the /v2 sniff decides, and it must come on
+    'resourceCache' => array('sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'base-v2: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'base-v2: capability probe hit the /v2 host, caching active');
+
+// --- Case 15: serviceUrl-only derives the same base ------------------------
+// serviceUrl set to <v2host>/api/export, serviceHost NEVER set. Before task-231
+// the capability probe went to the default (v1) serviceHost and missed; now it
+// must reach the same verdict as case 14. Regression guard for that bug.
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceUrl' => $svc . '/v2/api/export', 'verifySsl' => false,
+    // serviceHost deliberately unset
+    'resourceCache' => array('sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'base-urlonly: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'base-urlonly: serviceUrl-only reaches the same verdict as serviceHost');
+
+// --- Case 16: non-canonical serviceUrl falls back to serviceHost (v1) ------
+// A serviceUrl that is not the canonical .../api/export shape falls back to
+// serviceHost; with serviceHost unset that is the v1 default, so caching stays
+// off. The query string keeps the URL reachable by the mock while breaking the
+// canonical-shape match.
+ResourceCache::resetStaticCaches();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html,
+    'serviceUrl' => $svc . '/api/export?noncanonical=1', 'verifySsl' => false,
+    // serviceHost deliberately unset -> v1 default applies
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'base-noncanonical: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === false, 'base-noncanonical: non-canonical serviceUrl falls back to v1, cache off');
+
+// --- Case 17: mixed believed + shipped-declared survives a 409 re-send -----
+// Regression guard for the task-231 change-5 $baseOmit fix. With the default
+// cacheCustom scope 'global', buildResourceManifest declares BOTH the believed
+// js (omitted from the zip) and the shipped-but-not-believed css/png (declared
+// but still uploaded). The 409 re-send must re-add ONLY the missing believed
+// asset; the shipped-declared ones must never enter the omit-set, and the
+// manifest must survive onto the re-sent request.
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array())); // server believes nothing
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc, 'verifySsl' => false,
+    'resourceCache' => array('enabled' => true, 'sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+    // no cacheCustom -> scope defaults to 'global' -> declare-ship on
+);
+$countFile = getenv('MOCK_COUNT');
+$countBefore = $countFile ? (int) @file_get_contents($countFile) : 0;
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'mixed: recovered to a PDF after 409 re-send');
+$last = lastReq();
+check($last['status'] === 200, 'mixed: final request was 200');
+check($last['hadManifest'] === true, 'mixed: manifest still present on re-send');
+check(in_array($cssName, $last['zipEntries']), 'mixed: shipped-but-not-believed asset stays in the re-sent zip');
+check(in_array($jsName, $last['zipEntries']), 'mixed: believed asset re-added to the re-sent zip');
+$countAfter = $countFile ? (int) @file_get_contents($countFile) : 0;
+check($countAfter - $countBefore === 2, 'mixed: exactly two /api/export requests (409 + re-send), not three');
+
+// --- Case 18: cacheCustom:'global' rides along by default on the wire -------
+// No cacheCustom configured anywhere: on a /v2 base with no explicit enabled key
+// the cache comes on by default AND the manifest carries cacheCustom:'global'
+// (the 2.1.0 default scope) — the default survives onto the wire, not just in
+// the gate.
+ResourceCache::resetStaticCaches();
+$dir = freshDir();
+setControl(array('capability' => true, 'known' => array($jsHash)));
+$ex = new Exporter(array('secretToken' => 't'));
+$ex->settings = array(
+    'baseUrl' => $base . '/rc/', 'html' => $html, 'serviceHost' => $svc . '/v2', 'verifySsl' => false,
+    'resourceCache' => array('sync' => false,
+        'bundledHashSetPath' => writeBundled($dir, array($jsHash)), 'cacheDir' => $dir),
+);
+$body = $ex->cloudRequest('pdf', array());
+check(strpos($body, '%PDF') === 0, 'default-wire: got a PDF body');
+$last = lastReq();
+check($last['hadManifest'] === true, 'default-wire: cache on by default against a /v2 base');
+check($last['cacheCustom'] === 'global', 'default-wire: cacheCustom defaults to global on the wire');
 
 echo "resourceCache_service_test PASSED\n";

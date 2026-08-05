@@ -835,7 +835,9 @@ class Exporter
 
         $baseOmit = array();
         foreach ($ctx['manifestMap'] as $hash => $rel) {
-            $baseOmit[$rel] = true;
+            if (!empty($ctx['rc']) && $ctx['rc']->beliefHas($hash)) {
+                $baseOmit[$rel] = true;
+            }
         }
 
         $curlOptions[CURLOPT_POSTFIELDS] = $postfields;
@@ -861,7 +863,6 @@ class Exporter
 
             if ($code === 200) {
                 if ($cacheActive && $ctx['rc'] !== null) {
-                    error_log('RCDBG received headers = ' . json_encode($r['headers']));
                     $confirmed = $this->parseResourceCachedHeader($r['headers']);
                     // Only ever grow SELF with hashes we actually sent and the
                     // server confirmed — never trust arbitrary server data.
@@ -940,30 +941,33 @@ class Exporter
         $CLOUD_EXPORT_SERVICE = "https://service.chromeheadless.io";
         $serviceHost = rtrim(self::get($settings, 'serviceHost', $CLOUD_EXPORT_SERVICE), "/");
         $target_url = self::get($settings, 'serviceUrl', $serviceHost . "/api/export");
+        // The export URL is the honest decider: serviceHost and serviceUrl can be
+        // set independently. Recognise only the canonical ".../api/export" shape;
+        // anything else falls back to serviceHost, i.e. exactly today's behaviour.
+        $serviceBase = preg_match('#^(.*)/api/export/?$#', $target_url, $m)
+            ? rtrim($m[1], '/')
+            : $serviceHost;
         // Verify the service's TLS cert by default — the request carries the
         // Bearer token + report content. Self-signed / private export servers
         // can opt out with settings.verifySsl = false.
         $verifySsl = self::get($settings, 'verifySsl', true);
 
-        // Resource cache (opt-in, additive). Detect server support once (cached);
-        // if supported, opportunistically delta-sync the shared hash set (gated,
-        // failure-safe). Any problem here just leaves caching inactive.
+        // Resource cache (default-on against a /v2 service base, opt-in
+        // elsewhere). Detect server support once (cached); if supported,
+        // opportunistically delta-sync the shared hash set (gated, failure-safe).
+        // Any problem here just leaves caching inactive.
         $rc = null;
         $cacheActive = false;
         $cacheCustomScope = null;
         $rcConfig = self::get($settings, 'resourceCache', null);
-        if (is_array($rcConfig) && isset($rcConfig['cacheCustom']) && is_array($rcConfig['cacheCustom'])) {
-            $scope = self::get($rcConfig['cacheCustom'], 'scope');
-            if ($scope === 'tenant' || $scope === 'global') {
-                $cacheCustomScope = $scope;
-            }
-        }
-        if (is_array($rcConfig) && self::get($rcConfig, 'enabled', false) === true) {
-            $rc = new ResourceCache($rcConfig, $target_url, $secretToken);
+        $candidate = new ResourceCache(is_array($rcConfig) ? $rcConfig : array(), $target_url, $secretToken);
+        if ($candidate->isEnabled($serviceBase)) {
+            $rc = $candidate;
             try {
-                $cacheActive = $rc->capabilitySupported($serviceHost, $verifySsl);
+                $cacheActive = $rc->capabilitySupported($serviceBase, $verifySsl);
                 if ($cacheActive) {
-                    $rc->maybeSync($serviceHost, $verifySsl);
+                    $rc->maybeSync($serviceBase, $verifySsl);
+                    $cacheCustomScope = $rc->cacheCustomScope();
                 }
             } catch (\Exception $e) {
                 $cacheActive = false;
